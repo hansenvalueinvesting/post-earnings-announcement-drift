@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
 """
 Fetch NASDAQ-100 earnings surprise data + historical prices via yfinance.
-Simulates a PEAD strategy, computes portfolio performance statistics against a
-buy & hold QQQ benchmark, and outputs data.json consumed by the dashboard.
+Simulates a PEAD strategy and outputs per-trade data + summary stats to data.json.
 """
 
 import json
 import math
 import datetime
 import time
-import statistics
 
 import yfinance as yf
 import pandas as pd
 
 LOOKBACK_YEARS = 3
 HOLD_DAYS = 60
-START_CAPITAL = 100000
 UPCOMING_DAYS = 30
-TRADING_DAYS = 252
-BENCHMARK = "QQQ"
 
 # NDX-100 tickers (reliable fallback, updated periodically)
 NDX100 = [
@@ -118,113 +113,6 @@ def compute_sue(earnings):
     return results
 
 
-def build_daily_series(trades, prices, qqq, today_str, start_capital):
-    """Build a daily portfolio equity curve (equal-weight across open positions)
-    plus a buy & hold benchmark curve from the QQQ price series."""
-    if not qqq:
-        return None
-    qmap = {p['date']: p['close'] for p in qqq}
-    calendar = sorted(d for d in qmap if d <= today_str)
-    entries = [t['entryDate'] for t in trades if t.get('entryDate')]
-    if not entries or len(calendar) < 2:
-        return None
-    start_date = min(entries)
-    calendar = [d for d in calendar if d >= start_date]
-    if len(calendar) < 2:
-        return None
-
-    pmap = {sym: {p['date']: p['close'] for p in plist} for sym, plist in prices.items()}
-    windows = []
-    for t in trades:
-        sym = t['symbol']
-        if sym not in pmap:
-            continue
-        ed = t['entryDate']
-        xd = t['exitDate'] if not t['open'] else today_str
-        if ed and xd:
-            windows.append((sym, ed, xd))
-
-    q0 = qmap[calendar[0]]
-    eq_dates = [calendar[0]]
-    eq_port = [start_capital]
-    eq_bench = [start_capital]
-    port_rets, bench_rets = [], []
-
-    for i in range(1, len(calendar)):
-        prev, cur = calendar[i - 1], calendar[i]
-        day_rets = []
-        for sym, ed, xd in windows:
-            if ed <= prev and cur <= xd:
-                pm = pmap[sym]
-                if prev in pm and cur in pm and pm[prev] > 0:
-                    day_rets.append(pm[cur] / pm[prev] - 1)
-        pr = sum(day_rets) / len(day_rets) if day_rets else 0.0
-        br = qmap[cur] / qmap[prev] - 1
-        port_rets.append(pr)
-        bench_rets.append(br)
-        eq_dates.append(cur)
-        eq_port.append(round(eq_port[-1] * (1 + pr), 2))
-        eq_bench.append(round(start_capital * qmap[cur] / q0, 2))
-
-    return {
-        'dates': eq_dates, 'portfolio': eq_port, 'benchmark': eq_bench,
-        'port_rets': port_rets, 'bench_rets': bench_rets,
-        'start_date': calendar[0], 'end_date': calendar[-1]
-    }
-
-
-def compute_stats(equity, rets, bench_rets, start_date, end_date, start_capital):
-    """Compute portfolio performance metrics from a daily equity curve."""
-    n = len(rets)
-    final = equity[-1]
-    total_ret = final / start_capital - 1
-    days = (datetime.datetime.strptime(end_date, '%Y-%m-%d')
-            - datetime.datetime.strptime(start_date, '%Y-%m-%d')).days
-    years = days / 365.25 if days > 0 else 0
-    cagr = (final / start_capital) ** (1 / years) - 1 if years > 0 and final > 0 else 0
-
-    mean_d = sum(rets) / n if n else 0
-    std_d = statistics.pstdev(rets) if n > 1 else 0
-    sharpe = (mean_d / std_d) * math.sqrt(TRADING_DAYS) if std_d > 0 else 0
-    downside = math.sqrt(sum(min(r, 0) ** 2 for r in rets) / n) if n else 0
-    sortino = (mean_d / downside) * math.sqrt(TRADING_DAYS) if downside > 0 else 0
-
-    peak, mdd = equity[0], 0.0
-    for v in equity:
-        if v > peak:
-            peak = v
-        dd = v / peak - 1 if peak > 0 else 0
-        if dd < mdd:
-            mdd = dd
-    calmar = cagr / abs(mdd) if mdd < 0 else 0
-
-    beta = 0.0
-    if bench_rets and len(bench_rets) == n and n > 1:
-        mb = sum(bench_rets) / n
-        var_b = sum((b - mb) ** 2 for b in bench_rets) / n
-        cov = sum((rets[i] - mean_d) * (bench_rets[i] - mb) for i in range(n)) / n
-        beta = cov / var_b if var_b > 0 else 0
-
-    cvar = 0.0
-    if n:
-        srt = sorted(rets)
-        k = max(1, int(math.ceil(n * 0.05)))
-        cvar = sum(srt[:k]) / k
-
-    return {
-        'finalValue': round(final, 2),
-        'totalReturn': round(total_ret * 100, 2),
-        'cagr': round(cagr * 100, 2),
-        'beta': round(beta, 2),
-        'sharpe': round(sharpe, 2),
-        'sortino': round(sortino, 2),
-        'calmar': round(calmar, 2),
-        'maxDrawdown': round(mdd * 100, 2),
-        'cvar95': round(cvar * 100, 2),
-        'years': round(years, 1)
-    }
-
-
 def main():
     now = datetime.datetime.now(datetime.timezone.utc)
     today = now.date()
@@ -312,10 +200,6 @@ def main():
         if (i+1) % 10 == 0:
             time.sleep(0.5)
 
-    print(f"\nFetching {BENCHMARK} benchmark...")
-    qqq = fetch_prices(BENCHMARK, cutoff_str)
-    print(f"{len(qqq)} bars")
-
     # ── Build earnings date index per symbol ──
     earn_dates = {}
     for ev in all_events:
@@ -382,12 +266,24 @@ def main():
 
     open_t = [t for t in trades if t['open']]
     closed_t = [t for t in trades if not t['open']]
-    rets = [t['returnPct'] for t in closed_t if t['returnPct'] is not None]
+    closed_rets = [t['returnPct'] for t in closed_t if t['returnPct'] is not None]
+    wins = [r for r in closed_rets if r > 0]
+    losses = [r for r in closed_rets if r <= 0]
+
+    trade_stats = {
+        'total': len(trades),
+        'open': len(open_t),
+        'closed': len(closed_t),
+        'winRate': round(len(wins) / len(closed_rets) * 100, 1) if closed_rets else 0,
+        'avgWin': round(sum(wins) / len(wins), 2) if wins else 0,
+        'maxWin': round(max(wins), 2) if wins else 0,
+        'avgLoss': round(sum(losses) / len(losses), 2) if losses else 0,
+        'maxLoss': round(min(losses), 2) if losses else 0,
+    }
 
     print(f"Total: {len(trades)} ({len(open_t)} open, {len(closed_t)} closed)")
-    if rets:
-        print(f"Win rate: {sum(1 for r in rets if r > 0)/len(rets)*100:.1f}%")
-        print(f"Avg return: {sum(rets)/len(rets):.2f}%")
+    if closed_rets:
+        print(f"Win rate: {trade_stats['winRate']}%  Avg win: {trade_stats['avgWin']}%  Avg loss: {trade_stats['avgLoss']}%")
 
     # ── Today's activity ──
     today_activity = {
@@ -397,38 +293,11 @@ def main():
         'exited': [t for t in trades if t.get('exitDate') == today_str],
     }
 
-    # ── Portfolio + benchmark stats ──
-    stats = None
-    benchmark = None
-    equity_out = None
-    series = build_daily_series(trades, prices, qqq, today_str, START_CAPITAL)
-    if series:
-        wins = sum(1 for r in rets if r > 0)
-        stats = compute_stats(series['portfolio'], series['port_rets'],
-                              series['bench_rets'], series['start_date'],
-                              series['end_date'], START_CAPITAL)
-        stats['trades'] = len(closed_t)
-        stats['winRate'] = round(wins / len(rets) * 100, 1) if rets else 0
-        benchmark = compute_stats(series['benchmark'], series['bench_rets'],
-                                 series['bench_rets'], series['start_date'],
-                                 series['end_date'], START_CAPITAL)
-        benchmark['beta'] = 1.0
-        equity_out = {'dates': series['dates'],
-                      'portfolio': series['portfolio'],
-                      'benchmark': series['benchmark']}
-        print(f"\nFinal value: ${stats['finalValue']:,.0f} "
-              f"(B&H ${benchmark['finalValue']:,.0f}) | CAGR {stats['cagr']}% | "
-              f"Sharpe {stats['sharpe']} | Beta {stats['beta']}")
-
     output = {
         'updated': today_str,
         'updatedAt': updated_at,
-        'config': {'lookbackYears': LOOKBACK_YEARS, 'holdDays': HOLD_DAYS,
-                   'universe': 'NASDAQ-100', 'startCapital': START_CAPITAL,
-                   'benchmark': BENCHMARK},
-        'stats': stats,
-        'benchmark': benchmark,
-        'equity': equity_out,
+        'config': {'lookbackYears': LOOKBACK_YEARS, 'holdDays': HOLD_DAYS, 'universe': 'NASDAQ-100'},
+        'tradeStats': trade_stats,
         'upcomingEarnings': upcoming_earnings,
         'today': today_activity,
         'trades': trades
