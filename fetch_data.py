@@ -12,7 +12,7 @@ import time
 import yfinance as yf
 import pandas as pd
 
-LOOKBACK_YEARS = 3
+LOOKBACK_YEARS = 5
 HOLD_DAYS = 60
 UPCOMING_DAYS = 30
 
@@ -56,7 +56,7 @@ def fetch_earnings(sym, today_str):
     """Fetch earnings dates. Returns confirmed history (with EPS) and upcoming dates."""
     try:
         tk = yf.Ticker(sym)
-        df = tk.get_earnings_dates(limit=40)
+        df = tk.get_earnings_dates(limit=28)
         if df is None or df.empty:
             return {'history': [], 'upcoming': []}
 
