@@ -169,15 +169,19 @@
     border-radius: 20px;
   }
 
-  /* ── DUAL CHART ── */
-  .dual {
+  /* ── DUAL / TRIPLE CHART ── */
+  .dual, .triple {
     display: grid;
-    grid-template-columns: 1fr 1fr;
     gap: 22px;
     margin-top: 22px;
   }
-  .dual .card { margin-top: 0; }
-  .dual .chart-box { height: 230px; }
+  .dual { grid-template-columns: 1fr 1fr; }
+  .triple { grid-template-columns: 1fr 1fr 1fr; }
+  .dual .card, .triple .card { margin-top: 0; }
+  .dual .chart-box, .triple .chart-box { height: 230px; }
+  @media (max-width: 760px) {
+    .dual, .triple { grid-template-columns: 1fr; }
+  }
 
   /* ── TABLES ── */
   .t-wrap { overflow-x: auto; margin: 0 -4px; }
@@ -284,7 +288,6 @@
   }
 
   @media (max-width: 760px) {
-    .dual { grid-template-columns: 1fr; }
     header { padding-top: 28px; }
     header .updated { text-align: left; }
   }
@@ -337,7 +340,7 @@
     <div class="chart-box"><canvas id="scatterChart"></canvas></div>
   </div>
 
-  <div class="dual">
+  <div class="triple">
     <div class="card">
       <h2>Return Distribution</h2>
       <div class="chart-box"><canvas id="distChart"></canvas></div>
@@ -345,6 +348,10 @@
     <div class="card">
       <h2>Total Returns by Quarter</h2>
       <div class="chart-box"><canvas id="qChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Wins &amp; Losses by Quarter</h2>
+      <div class="chart-box"><canvas id="wlChart"></canvas></div>
     </div>
   </div>
 
@@ -378,7 +385,7 @@
 </div>
 
 <script>
-let scatterChartInst = null, distChartInst = null, qChartInst = null;
+let scatterChartInst = null, distChartInst = null, qChartInst = null, wlChartInst = null;
 
 const C = {
   green: '#18a957', red: '#e1383b', amber: '#d98a00',
@@ -411,6 +418,7 @@ async function init() {
     renderScatter(trades);
     renderDist(rets);
     renderQuarterly(closed);
+    renderWinLoss(closed);
 
     document.getElementById('status').innerHTML =
       `${trades.length} trades loaded — ${open.length} open, ${closed.length} closed · as of ${data.updatedAt || data.updated}`;
@@ -657,6 +665,49 @@ function renderQuarterly(closed) {
       scales: {
         x: { ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { display: false } },
         y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => v + '%' }, grid: { color: C.grid } }
+      }
+    }
+  });
+}
+
+function renderWinLoss(closed) {
+  if (!closed.length) return;
+  const byQ = {};
+  for (const t of closed) {
+    const d = new Date(t.earningsDate);
+    const q = `${d.getFullYear()}-Q${Math.ceil((d.getMonth()+1)/3)}`;
+    if (!byQ[q]) byQ[q] = { wins: 0, losses: 0 };
+    if (t.returnPct > 0) byQ[q].wins++;
+    else byQ[q].losses++;
+  }
+  const quarters = Object.keys(byQ).sort();
+
+  const ctx = document.getElementById('wlChart').getContext('2d');
+  if (wlChartInst) wlChartInst.destroy();
+  wlChartInst = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: quarters,
+      datasets: [
+        { label: 'Wins', data: quarters.map(q => byQ[q].wins), backgroundColor: C.green, borderRadius: 3, maxBarThickness: 20 },
+        { label: 'Losses', data: quarters.map(q => byQ[q].losses), backgroundColor: C.red, borderRadius: 3, maxBarThickness: 20 }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true, position: 'top', align: 'end',
+          labels: { boxWidth: 10, boxHeight: 10, font: { family: C.font, size: 10 }, color: C.tick, usePointStyle: true }
+        },
+        tooltip: {
+          backgroundColor: '#1a1d21', padding: 9, cornerRadius: 6,
+          titleFont: { family: C.font, size: 11 }, bodyFont: { family: C.font, size: 12 }
+        }
+      },
+      scales: {
+        x: { ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { display: false } },
+        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, stepSize: 1 }, grid: { color: C.grid } }
       }
     }
   });
