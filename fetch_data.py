@@ -239,12 +239,14 @@ def main():
             # Open
             cur = next((p for p in reversed(px) if p['date'] <= today_str), None)
             ret = round(((cur['close'] / entry['close']) - 1) * 100, 2) if cur else None
+            path = [round((p['close'] / entry['close'] - 1) * 100, 2)
+                    for p in px if entry['date'] <= p['date'] <= today_str]
             trades.append({
                 'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
                 'entryDate': entry['date'], 'entryPrice': entry['close'],
                 'exitDate': None, 'exitPrice': None,
                 'currentPrice': cur['close'] if cur else None,
-                'returnPct': ret,
+                'returnPct': ret, 'path': path,
                 'daysHeld': (today_dt - entry_dt).days,
                 'maxDays': (target_exit_dt - entry_dt).days,
                 'exitReason': None, 'open': True
@@ -255,11 +257,13 @@ def main():
             if not exit_bar:
                 continue
             ret = round(((exit_bar['close'] / entry['close']) - 1) * 100, 2)
+            path = [round((p['close'] / entry['close'] - 1) * 100, 2)
+                    for p in px if entry['date'] <= p['date'] <= exit_bar['date']]
             trades.append({
                 'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
                 'entryDate': entry['date'], 'entryPrice': entry['close'],
                 'exitDate': exit_bar['date'], 'exitPrice': exit_bar['close'],
-                'currentPrice': None, 'returnPct': ret,
+                'currentPrice': None, 'returnPct': ret, 'path': path,
                 'daysHeld': (datetime.datetime.strptime(exit_bar['date'], '%Y-%m-%d') - entry_dt).days,
                 'maxDays': HOLD_DAYS, 'exitReason': exit_reason, 'open': False
             })

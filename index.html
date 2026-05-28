@@ -504,14 +504,14 @@ function renderOpen(trades) {
     const cls = t.returnPct >= 0 ? 'pos' : 'neg';
     const pnl = t.returnPct != null ? `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%` : '—';
     const pct = Math.min(100, (t.daysHeld / Math.max(1, t.maxDays)) * 100);
-    const c = t.returnPct == null ? C.tick : t.returnPct >= 0 ? C.green : C.red;
+    const bg = pathToGradient(t.path);
     return `<tr>
       <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
       <td>${t.earningsDate}</td><td>${t.entryDate}</td>
       <td>$${t.entryPrice.toFixed(2)}</td>
       <td>${t.currentPrice ? '$'+t.currentPrice.toFixed(2) : '—'}</td>
       <td class="${cls}">${pnl}</td>
-      <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${c}"></div></div>${t.daysHeld}/${t.maxDays}d</td>
+      <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${bg}"></div></div>${t.daysHeld}/${t.maxDays}d</td>
     </tr>`;
   }).join('');
 }
@@ -524,16 +524,35 @@ function renderClosed(trades) {
   tb.innerHTML = trades.map(t => {
     const cls = t.returnPct >= 0 ? 'pos' : 'neg';
     const ret = `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%`;
-    const barColor = t.returnPct >= 0 ? C.green : C.red;
     const pct = Math.min(100, (t.daysHeld / Math.max(1, t.maxDays)) * 100);
+    const bg = pathToGradient(t.path);
     return `<tr>
       <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
       <td>${t.earningsDate}</td><td>${t.entryDate}</td><td>${t.exitDate}</td>
       <td>$${t.entryPrice.toFixed(2)}</td><td>$${t.exitPrice.toFixed(2)}</td>
       <td class="${cls}">${ret}</td><td>${t.daysHeld}d</td>
-      <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${barColor}"></div></div></td>
+      <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${bg}"></div></div></td>
     </tr>`;
   }).join('');
+}
+
+function pathToGradient(path) {
+  if (!path || !path.length) return C.green;
+  const n = path.length;
+  const segs = [];
+  for (let i = 0; i < n; i++) {
+    const color = path[i] >= 0 ? C.green : C.red;
+    if (!segs.length || segs[segs.length - 1].color !== color) {
+      segs.push({ color, start: i, end: i + 1 });
+    } else {
+      segs[segs.length - 1].end = i + 1;
+    }
+  }
+  const stops = segs.flatMap(s => [
+    `${s.color} ${(s.start / n * 100).toFixed(1)}%`,
+    `${s.color} ${(s.end   / n * 100).toFixed(1)}%`
+  ]);
+  return `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
 function renderScatter(trades) {
