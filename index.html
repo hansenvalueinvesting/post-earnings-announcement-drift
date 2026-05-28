@@ -330,7 +330,7 @@
       <div class="chart-box"><canvas id="distChart"></canvas></div>
     </div>
     <div class="card">
-      <h2>Returns by Quarter</h2>
+      <h2>Total Returns by Quarter</h2>
       <div class="chart-box"><canvas id="qChart"></canvas></div>
     </div>
   </div>
@@ -638,7 +638,7 @@ function renderQuarterly(closed) {
   const quarters = Object.keys(byQ).sort();
   const avgRets = quarters.map(q => {
     const r = byQ[q];
-    return +(r.reduce((a, b) => a + b, 0) / r.length).toFixed(2);
+    return +(r.reduce((a, b) => a + b, 0)).toFixed(2);
   });
   const colors = avgRets.map(r => r >= 0 ? C.green : C.red);
 
