@@ -565,9 +565,9 @@ function renderScatter(trades) {
         legend: { display: false },
         tooltip: {
           backgroundColor: '#1a1d21', padding: 10, cornerRadius: 6,
-          titleFont: { family: C.font, size: 11 },
-          bodyFont: { family: C.font, size: 12, weight: '600' },
-          titleColor: '#9aa0ab', bodyColor: '#fff',
+          titleFont: { family: C.font, size: 12, weight: '600' },
+          bodyFont: { family: C.font, size: 11 },
+          titleColor: '#fff', bodyColor: '#9aa0ab',
           callbacks: {
             title: items => items[0]?.raw?.symbol || '',
             label: c => {
@@ -577,6 +577,7 @@ function renderScatter(trades) {
           }
         }
       },
+      interaction: { mode: 'nearest', intersect: true },
       scales: {
         x: {
           type: 'time',
