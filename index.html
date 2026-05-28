@@ -637,9 +637,10 @@ function renderDist(rets) {
     const b = Math.floor(r / 5) * 5;
     buckets[b] = (buckets[b] || 0) + 1;
   }
-  const labels = Object.keys(buckets).map(b => `${b}%`);
-  const data = Object.values(buckets);
-  const colors = Object.keys(buckets).map(b => +b >= 0 ? C.green : C.red);
+  const sortedKeys = Object.keys(buckets).sort((a, b) => +a - +b);
+  const labels = sortedKeys.map(b => `${b}%`);
+  const data = sortedKeys.map(k => buckets[k]);
+  const colors = sortedKeys.map(b => +b >= 0 ? C.green : C.red);
 
   const ctx = document.getElementById('distChart').getContext('2d');
   if (distChartInst) distChartInst.destroy();
