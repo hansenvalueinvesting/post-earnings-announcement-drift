@@ -110,8 +110,10 @@ def compute_sue(earnings):
 
 
 def main():
-    today = datetime.date.today()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    today = now.date()
     today_str = str(today)
+    updated_at = now.strftime('%Y-%m-%d %H:%M:%S UTC')
     cutoff = today - datetime.timedelta(days=LOOKBACK_YEARS * 365)
     cutoff_str = str(cutoff)
 
@@ -141,7 +143,7 @@ def main():
 
     if not all_events:
         with open('data.json', 'w') as f:
-            json.dump({'trades': [], 'updated': today_str, 'error': 'No data'}, f)
+            json.dump({'trades': [], 'updated': today_str, 'updatedAt': updated_at, 'error': 'No data'}, f)
         print("No data. Wrote empty data.json.")
         return
 
@@ -252,6 +254,7 @@ def main():
 
     output = {
         'updated': today_str,
+        'updatedAt': updated_at,
         'config': {'lookbackYears': LOOKBACK_YEARS, 'holdDays': HOLD_DAYS, 'universe': 'NASDAQ-100'},
         'trades': trades
     }

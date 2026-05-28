@@ -6,22 +6,24 @@
 <title>Earnings Momentum</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
   :root {
-    --bg: #06060b;
-    --surface: #0e0e16;
-    --surface-2: #15151f;
-    --border: #1e1e2e;
-    --text: #d4d4e0;
-    --text-dim: #5c5c72;
-    --green: #22c55e;
-    --green-dim: rgba(34,197,94,0.1);
-    --red: #ef4444;
-    --red-dim: rgba(239,68,68,0.1);
-    --amber: #f59e0b;
-    --amber-dim: rgba(245,158,11,0.1);
-    --blue: #3b82f6;
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --border: #e8eaed;
+    --border-soft: #f0f1f3;
+    --text: #1a1d21;
+    --text-soft: #5f6571;
+    --text-dim: #9aa0ab;
+    --green: #18a957;
+    --green-soft: #e8f6ee;
+    --red: #e1383b;
+    --red-soft: #fcebeb;
+    --amber: #d98a00;
+    --amber-soft: #fbf2e0;
+    --accent: #2563eb;
+    --shadow: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06);
   }
 
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -29,128 +31,148 @@
   body {
     background: var(--bg);
     color: var(--text);
-    font-family: 'Instrument Sans', sans-serif;
+    font-family: 'Inter', sans-serif;
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
+    line-height: 1.45;
   }
 
-  .mono { font-family: 'JetBrains Mono', monospace; }
+  .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
+
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
 
   /* ── HEADER ── */
   header {
-    padding: 32px 40px 24px;
-    border-bottom: 1px solid var(--border);
+    padding: 40px 0 28px;
     display: flex;
     justify-content: space-between;
-    align-items: flex-end;
+    align-items: flex-start;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 16px;
   }
   header h1 {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--green);
-    letter-spacing: -0.5px;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    color: var(--text);
   }
-  header .meta {
+  header .sub {
+    font-size: 13px;
+    color: var(--text-soft);
+    margin-top: 6px;
+  }
+  header .updated {
+    text-align: right;
     font-size: 12px;
     color: var(--text-dim);
-    font-family: 'JetBrains Mono', monospace;
   }
-  header .meta span { color: var(--text); }
+  header .updated .stamp {
+    display: block;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--text-soft);
+    font-weight: 500;
+    margin-top: 2px;
+  }
 
   /* ── STATUS ── */
   #status {
-    padding: 10px 40px;
-    font-size: 12px;
-    color: var(--text-dim);
-    font-family: 'JetBrains Mono', monospace;
+    font-size: 12.5px;
+    color: var(--text-soft);
     background: var(--surface);
-    border-bottom: 1px solid var(--border);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 16px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
+    box-shadow: var(--shadow);
   }
   .spinner {
-    width: 12px; height: 12px;
+    width: 13px; height: 13px;
     border: 2px solid var(--border);
-    border-top-color: var(--green);
+    border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
 
-  /* ── STAT STRIP ── */
+  /* ── STAT GRID ── */
   .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 1px;
-    background: var(--border);
-    border-bottom: 1px solid var(--border);
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
+    margin-top: 24px;
   }
   .stat {
     background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
     padding: 18px 20px;
-    text-align: center;
+    box-shadow: var(--shadow);
   }
   .stat .label {
-    font-size: 10px;
+    font-size: 11px;
     color: var(--text-dim);
     text-transform: uppercase;
-    letter-spacing: 1.2px;
-    margin-bottom: 4px;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+    margin-bottom: 8px;
   }
   .stat .val {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 20px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 23px;
     font-weight: 600;
+    letter-spacing: -0.5px;
   }
   .stat .val.g { color: var(--green); }
   .stat .val.r { color: var(--red); }
 
-  /* ── CHART ── */
-  .chart-wrap {
-    padding: 28px 40px;
-    border-bottom: 1px solid var(--border);
+  /* ── CARDS ── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    margin-top: 22px;
+    box-shadow: var(--shadow);
   }
-  .chart-wrap h2 {
-    font-size: 11px;
+  .card h2 {
+    font-size: 13px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--text-dim);
-    margin-bottom: 14px;
-  }
-  .chart-box { position: relative; height: 260px; }
-
-  /* ── TABLES ── */
-  .section {
-    padding: 28px 40px;
-    border-bottom: 1px solid var(--border);
-  }
-  .section h2 {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
-    color: var(--text-dim);
-    margin-bottom: 14px;
+    color: var(--text);
+    margin-bottom: 18px;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 9px;
   }
+  .card h2 .hint { font-weight: 400; color: var(--text-dim); font-size: 12px; }
+  .chart-box { position: relative; height: 280px; }
+
   .badge {
-    background: var(--surface-2);
-    color: var(--text);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-soft);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    padding: 1px 8px;
+    border-radius: 20px;
   }
 
-  .t-wrap { overflow-x: auto; }
+  /* ── DUAL CHART ── */
+  .dual {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+    margin-top: 22px;
+  }
+  .dual .card { margin-top: 0; }
+  .dual .chart-box { height: 230px; }
 
+  /* ── TABLES ── */
+  .t-wrap { overflow-x: auto; margin: 0 -4px; }
   table {
     width: 100%;
     border-collapse: collapse;
@@ -158,163 +180,158 @@
   }
   thead th {
     text-align: left;
-    padding: 8px 10px;
-    font-size: 10px;
-    font-weight: 500;
+    padding: 0 12px 10px;
+    font-size: 11px;
+    font-weight: 600;
     color: var(--text-dim);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.4px;
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
-    position: sticky;
-    top: 0;
-    background: var(--bg);
   }
   tbody td {
-    padding: 9px 10px;
-    border-bottom: 1px solid rgba(30,30,46,0.5);
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 12px;
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--border-soft);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12.5px;
     white-space: nowrap;
+    color: var(--text-soft);
   }
-  tbody tr:hover { background: rgba(34,197,94,0.03); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--bg); }
 
-  .tk { font-weight: 600; color: var(--green); }
-  .pos { color: var(--green); }
-  .neg { color: var(--red); }
+  .tk { font-weight: 600; color: var(--text); font-family: 'Inter', sans-serif; }
+  .pos { color: var(--green); font-weight: 500; }
+  .neg { color: var(--red); font-weight: 500; }
 
   .tag {
     display: inline-block;
-    padding: 2px 7px;
-    border-radius: 3px;
-    font-size: 10px;
+    padding: 2px 9px;
+    border-radius: 20px;
+    font-size: 10.5px;
     font-weight: 600;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.2px;
+    font-family: 'Inter', sans-serif;
   }
-  .tag-g { background: var(--green-dim); color: var(--green); }
-  .tag-r { background: var(--red-dim); color: var(--red); }
-  .tag-a { background: var(--amber-dim); color: var(--amber); }
+  .tag-g { background: var(--green-soft); color: var(--green); }
+  .tag-r { background: var(--red-soft); color: var(--red); }
+  .tag-a { background: var(--amber-soft); color: var(--amber); }
 
   /* ── PROGRESS BAR ── */
   .pbar {
-    width: 50px; height: 5px;
-    background: var(--surface-2);
-    border-radius: 3px;
+    width: 52px; height: 6px;
+    background: var(--border);
+    border-radius: 4px;
     overflow: hidden;
     display: inline-block;
     vertical-align: middle;
-    margin-right: 5px;
+    margin-right: 7px;
   }
-  .pbar .fill { height: 100%; border-radius: 3px; }
+  .pbar .fill { height: 100%; border-radius: 4px; }
 
   .empty {
     text-align: center;
     padding: 40px;
     color: var(--text-dim);
     font-size: 13px;
+    font-family: 'Inter', sans-serif;
   }
 
-  /* ── DISTRIBUTION CHART ── */
-  .dual-chart {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1px;
-    background: var(--border);
-    border-bottom: 1px solid var(--border);
-  }
-  .dual-chart .chart-panel {
-    background: var(--bg);
-    padding: 28px 40px;
-  }
-  .dual-chart h2 {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1.2px;
+  footer {
+    text-align: center;
+    padding: 32px 0 48px;
+    font-size: 12px;
     color: var(--text-dim);
-    margin-bottom: 14px;
   }
-  .dual-chart .chart-box { height: 220px; }
 
-  @media (max-width: 900px) {
-    header, .section, .chart-wrap { padding-left: 16px; padding-right: 16px; }
-    #status { padding-left: 16px; }
-    .stats { grid-template-columns: repeat(3, 1fr); }
-    .dual-chart { grid-template-columns: 1fr; }
-    .dual-chart .chart-panel { padding: 20px 16px; }
+  @media (max-width: 760px) {
+    .dual { grid-template-columns: 1fr; }
+    header { padding-top: 28px; }
+    header .updated { text-align: left; }
   }
 </style>
 </head>
 <body>
 
-<header>
-  <div>
-    <h1>EARNINGS MOMENTUM</h1>
-    <div style="font-size:12px;color:var(--text-dim);margin-top:4px;">
-      Automated PEAD Strategy · NASDAQ-100 · SUE Top Decile · 60-Day Hold
+<div class="wrap">
+
+  <header>
+    <div>
+      <h1>Earnings Momentum</h1>
+      <div class="sub">Automated PEAD strategy · NASDAQ-100 · SUE top decile · 60-day hold</div>
+    </div>
+    <div class="updated">
+      Last updated
+      <span class="stamp" id="updated">—</span>
+    </div>
+  </header>
+
+  <div id="status"><div class="spinner"></div> Loading data…</div>
+
+  <div class="stats">
+    <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTotal">—</div></div>
+    <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWin">—</div></div>
+    <div class="stat"><div class="label">Avg Return</div><div class="val mono" id="sAvg">—</div></div>
+    <div class="stat"><div class="label">Cumulative</div><div class="val mono" id="sCum">—</div></div>
+    <div class="stat"><div class="label">Best</div><div class="val mono" id="sBest">—</div></div>
+    <div class="stat"><div class="label">Worst</div><div class="val mono" id="sWorst">—</div></div>
+    <div class="stat"><div class="label">Open</div><div class="val mono" id="sOpen">—</div></div>
+  </div>
+
+  <div class="card">
+    <h2>Equity Curve <span class="hint">compounded, $100 start</span></h2>
+    <div class="chart-box"><canvas id="eqChart"></canvas></div>
+  </div>
+
+  <div class="dual">
+    <div class="card">
+      <h2>Return Distribution</h2>
+      <div class="chart-box"><canvas id="distChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Returns by Quarter</h2>
+      <div class="chart-box"><canvas id="qChart"></canvas></div>
     </div>
   </div>
-  <div class="meta">
-    Updated <span id="updated">—</span>
+
+  <div class="card" id="openSec">
+    <h2>Open Trades <span class="badge" id="openN">0</span></h2>
+    <div class="t-wrap">
+      <table>
+        <thead><tr>
+          <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th>
+          <th>Entry $</th><th>Current $</th><th>P&L</th><th>Progress</th>
+        </tr></thead>
+        <tbody id="openTb"></tbody>
+      </table>
+    </div>
   </div>
-</header>
 
-<div id="status"><div class="spinner"></div> Loading data...</div>
-
-<div class="stats">
-  <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTotal">—</div></div>
-  <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWin">—</div></div>
-  <div class="stat"><div class="label">Avg Return</div><div class="val mono" id="sAvg">—</div></div>
-  <div class="stat"><div class="label">Cumulative</div><div class="val mono" id="sCum">—</div></div>
-  <div class="stat"><div class="label">Best</div><div class="val mono" id="sBest">—</div></div>
-  <div class="stat"><div class="label">Worst</div><div class="val mono" id="sWorst">—</div></div>
-  <div class="stat"><div class="label">Open</div><div class="val mono" id="sOpen">—</div></div>
-</div>
-
-<div class="chart-wrap">
-  <h2>Equity Curve (Compounded, $100 Start)</h2>
-  <div class="chart-box"><canvas id="eqChart"></canvas></div>
-</div>
-
-<div class="dual-chart">
-  <div class="chart-panel">
-    <h2>Return Distribution</h2>
-    <div class="chart-box"><canvas id="distChart"></canvas></div>
+  <div class="card" id="closedSec">
+    <h2>Closed Trades <span class="badge" id="closedN">0</span></h2>
+    <div class="t-wrap">
+      <table>
+        <thead><tr>
+          <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th><th>Exit</th>
+          <th>Entry $</th><th>Exit $</th><th>Return</th><th>Days</th><th>Reason</th>
+        </tr></thead>
+        <tbody id="closedTb"></tbody>
+      </table>
+    </div>
   </div>
-  <div class="chart-panel">
-    <h2>Returns by Quarter</h2>
-    <div class="chart-box"><canvas id="qChart"></canvas></div>
-  </div>
-</div>
 
-<div class="section" id="openSec">
-  <h2>Open Trades <span class="badge" id="openN">0</span></h2>
-  <div class="t-wrap">
-    <table>
-      <thead><tr>
-        <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th>
-        <th>Entry $</th><th>Current $</th><th>P&L</th><th>Progress</th>
-      </tr></thead>
-      <tbody id="openTb"></tbody>
-    </table>
-  </div>
-</div>
+  <footer>PEAD research dashboard · for educational use only, not investment advice</footer>
 
-<div class="section" id="closedSec">
-  <h2>Closed Trades <span class="badge" id="closedN">0</span></h2>
-  <div class="t-wrap">
-    <table>
-      <thead><tr>
-        <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th><th>Exit</th>
-        <th>Entry $</th><th>Exit $</th><th>Return</th><th>Days</th><th>Reason</th>
-      </tr></thead>
-      <tbody id="closedTb"></tbody>
-    </table>
-  </div>
 </div>
 
 <script>
 let eqChartInst = null, distChartInst = null, qChartInst = null;
+
+const C = {
+  green: '#18a957', red: '#e1383b', amber: '#d98a00',
+  grid: 'rgba(26,29,33,0.06)', tick: '#9aa0ab',
+  font: 'IBM Plex Mono'
+};
 
 async function init() {
   try {
@@ -327,7 +344,7 @@ async function init() {
       return;
     }
 
-    document.getElementById('updated').textContent = data.updated;
+    document.getElementById('updated').textContent = data.updatedAt || data.updated;
     const trades = data.trades || [];
     const open = trades.filter(t => t.open);
     const closed = trades.filter(t => !t.open);
@@ -340,8 +357,8 @@ async function init() {
     renderDist(rets);
     renderQuarterly(closed);
 
-    document.getElementById('status').textContent =
-      `${trades.length} trades loaded (${open.length} open, ${closed.length} closed). Data as of ${data.updated}.`;
+    document.getElementById('status').innerHTML =
+      `${trades.length} trades loaded — ${open.length} open, ${closed.length} closed · as of ${data.updatedAt || data.updated}`;
   } catch (e) {
     document.getElementById('status').textContent = `Failed to load: ${e.message}`;
   }
@@ -385,7 +402,7 @@ function renderOpen(trades) {
     const cls = t.returnPct >= 0 ? 'pos' : 'neg';
     const pnl = t.returnPct != null ? `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%` : '—';
     const pct = Math.min(100, (t.daysHeld / Math.max(1, t.maxDays)) * 100);
-    const c = pct < 40 ? 'var(--green)' : pct < 70 ? 'var(--amber)' : 'var(--red)';
+    const c = pct < 40 ? C.green : pct < 70 ? C.amber : C.red;
     return `<tr>
       <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
       <td>${t.earningsDate}</td><td>${t.entryDate}</td>
@@ -431,31 +448,32 @@ function renderEquity(closed) {
 
   const ctx = document.getElementById('eqChart').getContext('2d');
   if (eqChartInst) eqChartInst.destroy();
-  const grad = ctx.createLinearGradient(0, 0, 0, 260);
-  grad.addColorStop(0, 'rgba(34,197,94,0.12)');
-  grad.addColorStop(1, 'rgba(34,197,94,0)');
+  const grad = ctx.createLinearGradient(0, 0, 0, 280);
+  grad.addColorStop(0, 'rgba(24,169,87,0.14)');
+  grad.addColorStop(1, 'rgba(24,169,87,0)');
 
   eqChartInst = new Chart(ctx, {
     type: 'line',
     data: { labels, datasets: [{
-      data, borderColor: '#22c55e', borderWidth: 1.5,
+      data, borderColor: C.green, borderWidth: 2,
       backgroundColor: grad, fill: true, tension: 0.35,
-      pointRadius: 0, pointHoverRadius: 3, pointHoverBackgroundColor: '#22c55e'
+      pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: C.green,
+      pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2
     }]},
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false },
         tooltip: {
-          backgroundColor: '#15151f', borderColor: '#1e1e2e', borderWidth: 1,
-          titleFont: { family: 'JetBrains Mono', size: 10 },
-          bodyFont: { family: 'JetBrains Mono', size: 11 },
-          titleColor: '#5c5c72', bodyColor: '#d4d4e0',
+          backgroundColor: '#1a1d21', padding: 10, cornerRadius: 6, displayColors: false,
+          titleFont: { family: C.font, size: 11 },
+          bodyFont: { family: C.font, size: 12, weight: '600' },
+          titleColor: '#9aa0ab', bodyColor: '#fff',
           callbacks: { label: c => `$${c.parsed.y.toFixed(2)}` }
         }
       },
       scales: {
-        x: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 8, maxRotation: 0 }, grid: { color: 'rgba(30,30,46,0.4)' } },
-        y: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, callback: v => '$' + v }, grid: { color: 'rgba(30,30,46,0.4)' } }
+        x: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, maxTicksLimit: 8, maxRotation: 0 }, grid: { color: C.grid } },
+        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => '$' + v }, grid: { color: C.grid } }
       },
       interaction: { intersect: false, mode: 'index' }
     }
@@ -464,7 +482,6 @@ function renderEquity(closed) {
 
 function renderDist(rets) {
   if (!rets.length) return;
-  // Bucket into 5% bins
   const min = Math.floor(Math.min(...rets) / 5) * 5;
   const max = Math.ceil(Math.max(...rets) / 5) * 5;
   const buckets = {};
@@ -475,19 +492,21 @@ function renderDist(rets) {
   }
   const labels = Object.keys(buckets).map(b => `${b}%`);
   const data = Object.values(buckets);
-  const colors = Object.keys(buckets).map(b => +b >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)');
+  const colors = Object.keys(buckets).map(b => +b >= 0 ? C.green : C.red);
 
   const ctx = document.getElementById('distChart').getContext('2d');
   if (distChartInst) distChartInst.destroy();
   distChartInst = new Chart(ctx, {
     type: 'bar',
-    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3 }] },
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 4, maxBarThickness: 28 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: false },
+        tooltip: { backgroundColor: '#1a1d21', padding: 9, cornerRadius: 6, displayColors: false,
+          titleFont: { family: C.font, size: 11 }, bodyFont: { family: C.font, size: 12 } } },
       scales: {
-        x: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 } }, grid: { display: false } },
-        y: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, stepSize: 1 }, grid: { color: 'rgba(30,30,46,0.4)' } }
+        x: { ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { display: false } },
+        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, stepSize: 1 }, grid: { color: C.grid } }
       }
     }
   });
@@ -495,7 +514,6 @@ function renderDist(rets) {
 
 function renderQuarterly(closed) {
   if (!closed.length) return;
-  // Group by quarter of earnings date
   const byQ = {};
   for (const t of closed) {
     const d = new Date(t.earningsDate);
@@ -508,19 +526,22 @@ function renderQuarterly(closed) {
     const r = byQ[q];
     return +(r.reduce((a, b) => a + b, 0) / r.length).toFixed(2);
   });
-  const colors = avgRets.map(r => r >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)');
+  const colors = avgRets.map(r => r >= 0 ? C.green : C.red);
 
   const ctx = document.getElementById('qChart').getContext('2d');
   if (qChartInst) qChartInst.destroy();
   qChartInst = new Chart(ctx, {
     type: 'bar',
-    data: { labels: quarters, datasets: [{ data: avgRets, backgroundColor: colors, borderRadius: 3 }] },
+    data: { labels: quarters, datasets: [{ data: avgRets, backgroundColor: colors, borderRadius: 4, maxBarThickness: 28 }] },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      plugins: { legend: { display: false },
+        tooltip: { backgroundColor: '#1a1d21', padding: 9, cornerRadius: 6, displayColors: false,
+          titleFont: { family: C.font, size: 11 }, bodyFont: { family: C.font, size: 12 },
+          callbacks: { label: c => `${c.parsed.y >= 0 ? '+' : ''}${c.parsed.y}%` } } },
       scales: {
-        x: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 } }, grid: { display: false } },
-        y: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, callback: v => v + '%' }, grid: { color: 'rgba(30,30,46,0.4)' } }
+        x: { ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { display: false } },
+        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => v + '%' }, grid: { color: C.grid } }
       }
     }
   });
