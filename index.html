@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Earnings Momentum</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #06060b;
+    --surface: #0e0e16;
+    --surface-2: #15151f;
+    --border: #1e1e2e;
+    --text: #d4d4e0;
+    --text-dim: #5c5c72;
+    --green: #22c55e;
+    --green-dim: rgba(34,197,94,0.1);
+    --red: #ef4444;
+    --red-dim: rgba(239,68,68,0.1);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,0.1);
+    --blue: #3b82f6;
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Instrument Sans', sans-serif;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* ── HEADER ── */
+  header {
+    padding: 32px 40px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--green);
+    letter-spacing: -0.5px;
+  }
+  header .meta {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  header .meta span { color: var(--text); }
+
+  /* ── STATUS ── */
+  #status {
+    padding: 10px 40px;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .spinner {
+    width: 12px; height: 12px;
+    border: 2px solid var(--border);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── STAT STRIP ── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .stat {
+    background: var(--surface);
+    padding: 18px 20px;
+    text-align: center;
+  }
+  .stat .label {
+    font-size: 10px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 4px;
+  }
+  .stat .val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    font-weight: 600;
+  }
+  .stat .val.g { color: var(--green); }
+  .stat .val.r { color: var(--red); }
+
+  /* ── CHART ── */
+  .chart-wrap {
+    padding: 28px 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .chart-wrap h2 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+  }
+  .chart-box { position: relative; height: 260px; }
+
+  /* ── TABLES ── */
+  .section {
+    padding: 28px 40px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section h2 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .badge {
+    background: var(--surface-2);
+    color: var(--text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 4px;
+  }
+
+  .t-wrap { overflow-x: auto; }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    text-align: left;
+    padding: 8px 10px;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+  }
+  tbody td {
+    padding: 9px 10px;
+    border-bottom: 1px solid rgba(30,30,46,0.5);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  tbody tr:hover { background: rgba(34,197,94,0.03); }
+
+  .tk { font-weight: 600; color: var(--green); }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+
+  .tag {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .tag-g { background: var(--green-dim); color: var(--green); }
+  .tag-r { background: var(--red-dim); color: var(--red); }
+  .tag-a { background: var(--amber-dim); color: var(--amber); }
+
+  /* ── PROGRESS BAR ── */
+  .pbar {
+    width: 50px; height: 5px;
+    background: var(--surface-2);
+    border-radius: 3px;
+    overflow: hidden;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 5px;
+  }
+  .pbar .fill { height: 100%; border-radius: 3px; }
+
+  .empty {
+    text-align: center;
+    padding: 40px;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  /* ── DISTRIBUTION CHART ── */
+  .dual-chart {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border-bottom: 1px solid var(--border);
+  }
+  .dual-chart .chart-panel {
+    background: var(--bg);
+    padding: 28px 40px;
+  }
+  .dual-chart h2 {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--text-dim);
+    margin-bottom: 14px;
+  }
+  .dual-chart .chart-box { height: 220px; }
+
+  @media (max-width: 900px) {
+    header, .section, .chart-wrap { padding-left: 16px; padding-right: 16px; }
+    #status { padding-left: 16px; }
+    .stats { grid-template-columns: repeat(3, 1fr); }
+    .dual-chart { grid-template-columns: 1fr; }
+    .dual-chart .chart-panel { padding: 20px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>EARNINGS MOMENTUM</h1>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:4px;">
+      Automated PEAD Strategy · NASDAQ-100 · SUE Top Decile · 60-Day Hold
+    </div>
+  </div>
+  <div class="meta">
+    Updated <span id="updated">—</span>
+  </div>
+</header>
+
+<div id="status"><div class="spinner"></div> Loading data...</div>
+
+<div class="stats">
+  <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTotal">—</div></div>
+  <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWin">—</div></div>
+  <div class="stat"><div class="label">Avg Return</div><div class="val mono" id="sAvg">—</div></div>
+  <div class="stat"><div class="label">Cumulative</div><div class="val mono" id="sCum">—</div></div>
+  <div class="stat"><div class="label">Best</div><div class="val mono" id="sBest">—</div></div>
+  <div class="stat"><div class="label">Worst</div><div class="val mono" id="sWorst">—</div></div>
+  <div class="stat"><div class="label">Open</div><div class="val mono" id="sOpen">—</div></div>
+</div>
+
+<div class="chart-wrap">
+  <h2>Equity Curve (Compounded, $100 Start)</h2>
+  <div class="chart-box"><canvas id="eqChart"></canvas></div>
+</div>
+
+<div class="dual-chart">
+  <div class="chart-panel">
+    <h2>Return Distribution</h2>
+    <div class="chart-box"><canvas id="distChart"></canvas></div>
+  </div>
+  <div class="chart-panel">
+    <h2>Returns by Quarter</h2>
+    <div class="chart-box"><canvas id="qChart"></canvas></div>
+  </div>
+</div>
+
+<div class="section" id="openSec">
+  <h2>Open Trades <span class="badge" id="openN">0</span></h2>
+  <div class="t-wrap">
+    <table>
+      <thead><tr>
+        <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th>
+        <th>Entry $</th><th>Current $</th><th>P&L</th><th>Progress</th>
+      </tr></thead>
+      <tbody id="openTb"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" id="closedSec">
+  <h2>Closed Trades <span class="badge" id="closedN">0</span></h2>
+  <div class="t-wrap">
+    <table>
+      <thead><tr>
+        <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th><th>Exit</th>
+        <th>Entry $</th><th>Exit $</th><th>Return</th><th>Days</th><th>Reason</th>
+      </tr></thead>
+      <tbody id="closedTb"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let eqChartInst = null, distChartInst = null, qChartInst = null;
+
+async function init() {
+  try {
+    const resp = await fetch('data.json');
+    if (!resp.ok) throw new Error('data.json not found');
+    const data = await resp.json();
+
+    if (data.error) {
+      document.getElementById('status').textContent = `Error: ${data.error}`;
+      return;
+    }
+
+    document.getElementById('updated').textContent = data.updated;
+    const trades = data.trades || [];
+    const open = trades.filter(t => t.open);
+    const closed = trades.filter(t => !t.open);
+    const rets = closed.map(t => t.returnPct).filter(r => r != null);
+
+    renderStats(trades, open, closed, rets);
+    renderOpen(open);
+    renderClosed(closed);
+    renderEquity(closed);
+    renderDist(rets);
+    renderQuarterly(closed);
+
+    document.getElementById('status').textContent =
+      `${trades.length} trades loaded (${open.length} open, ${closed.length} closed). Data as of ${data.updated}.`;
+  } catch (e) {
+    document.getElementById('status').textContent = `Failed to load: ${e.message}`;
+  }
+}
+
+function renderStats(all, open, closed, rets) {
+  const wins = rets.filter(r => r > 0).length;
+  const wr = rets.length ? (wins / rets.length * 100) : 0;
+  const avg = rets.length ? rets.reduce((a, b) => a + b, 0) / rets.length : 0;
+  let cum = 1;
+  for (const r of rets) cum *= (1 + r / 100);
+  cum = (cum - 1) * 100;
+  const best = rets.length ? Math.max(...rets) : 0;
+  const worst = rets.length ? Math.min(...rets) : 0;
+
+  document.getElementById('sTotal').textContent = all.length;
+  const wrEl = document.getElementById('sWin');
+  wrEl.textContent = wr.toFixed(1) + '%';
+  wrEl.className = `val mono ${wr >= 50 ? 'g' : 'r'}`;
+  const avEl = document.getElementById('sAvg');
+  avEl.textContent = (avg >= 0 ? '+' : '') + avg.toFixed(2) + '%';
+  avEl.className = `val mono ${avg >= 0 ? 'g' : 'r'}`;
+  const cuEl = document.getElementById('sCum');
+  cuEl.textContent = (cum >= 0 ? '+' : '') + cum.toFixed(1) + '%';
+  cuEl.className = `val mono ${cum >= 0 ? 'g' : 'r'}`;
+  const bEl = document.getElementById('sBest');
+  bEl.textContent = '+' + best.toFixed(1) + '%';
+  bEl.className = 'val mono g';
+  const wEl = document.getElementById('sWorst');
+  wEl.textContent = worst.toFixed(1) + '%';
+  wEl.className = 'val mono r';
+  document.getElementById('sOpen').textContent = open.length;
+}
+
+function renderOpen(trades) {
+  document.getElementById('openN').textContent = trades.length;
+  const tb = document.getElementById('openTb');
+  if (!trades.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No open trades</td></tr>'; return; }
+  trades.sort((a, b) => b.sue - a.sue);
+  tb.innerHTML = trades.map(t => {
+    const cls = t.returnPct >= 0 ? 'pos' : 'neg';
+    const pnl = t.returnPct != null ? `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%` : '—';
+    const pct = Math.min(100, (t.daysHeld / Math.max(1, t.maxDays)) * 100);
+    const c = pct < 40 ? 'var(--green)' : pct < 70 ? 'var(--amber)' : 'var(--red)';
+    return `<tr>
+      <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
+      <td>${t.earningsDate}</td><td>${t.entryDate}</td>
+      <td>$${t.entryPrice.toFixed(2)}</td>
+      <td>${t.currentPrice ? '$'+t.currentPrice.toFixed(2) : '—'}</td>
+      <td class="${cls}">${pnl}</td>
+      <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${c}"></div></div>${t.daysHeld}/${t.maxDays}d</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderClosed(trades) {
+  document.getElementById('closedN').textContent = trades.length;
+  const tb = document.getElementById('closedTb');
+  if (!trades.length) { tb.innerHTML = '<tr><td colspan="10" class="empty">No closed trades</td></tr>'; return; }
+  trades.sort((a, b) => new Date(b.exitDate) - new Date(a.exitDate));
+  tb.innerHTML = trades.map(t => {
+    const cls = t.returnPct >= 0 ? 'pos' : 'neg';
+    const ret = `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%`;
+    const reason = t.exitReason === 'next_earnings'
+      ? '<span class="tag tag-a">EARNINGS</span>'
+      : '<span class="tag tag-g">HOLD</span>';
+    return `<tr>
+      <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
+      <td>${t.earningsDate}</td><td>${t.entryDate}</td><td>${t.exitDate}</td>
+      <td>$${t.entryPrice.toFixed(2)}</td><td>$${t.exitPrice.toFixed(2)}</td>
+      <td class="${cls}">${ret}</td><td>${t.daysHeld}d</td><td>${reason}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderEquity(closed) {
+  if (!closed.length) return;
+  const sorted = [...closed].sort((a, b) => new Date(a.exitDate) - new Date(b.exitDate));
+  let cum = 100;
+  const labels = ['Start'];
+  const data = [100];
+  for (const t of sorted) {
+    cum *= (1 + t.returnPct / 100);
+    labels.push(t.exitDate);
+    data.push(+cum.toFixed(2));
+  }
+
+  const ctx = document.getElementById('eqChart').getContext('2d');
+  if (eqChartInst) eqChartInst.destroy();
+  const grad = ctx.createLinearGradient(0, 0, 0, 260);
+  grad.addColorStop(0, 'rgba(34,197,94,0.12)');
+  grad.addColorStop(1, 'rgba(34,197,94,0)');
+
+  eqChartInst = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{
+      data, borderColor: '#22c55e', borderWidth: 1.5,
+      backgroundColor: grad, fill: true, tension: 0.35,
+      pointRadius: 0, pointHoverRadius: 3, pointHoverBackgroundColor: '#22c55e'
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+        tooltip: {
+          backgroundColor: '#15151f', borderColor: '#1e1e2e', borderWidth: 1,
+          titleFont: { family: 'JetBrains Mono', size: 10 },
+          bodyFont: { family: 'JetBrains Mono', size: 11 },
+          titleColor: '#5c5c72', bodyColor: '#d4d4e0',
+          callbacks: { label: c => `$${c.parsed.y.toFixed(2)}` }
+        }
+      },
+      scales: {
+        x: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, maxTicksLimit: 8, maxRotation: 0 }, grid: { color: 'rgba(30,30,46,0.4)' } },
+        y: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, callback: v => '$' + v }, grid: { color: 'rgba(30,30,46,0.4)' } }
+      },
+      interaction: { intersect: false, mode: 'index' }
+    }
+  });
+}
+
+function renderDist(rets) {
+  if (!rets.length) return;
+  // Bucket into 5% bins
+  const min = Math.floor(Math.min(...rets) / 5) * 5;
+  const max = Math.ceil(Math.max(...rets) / 5) * 5;
+  const buckets = {};
+  for (let b = min; b <= max; b += 5) buckets[b] = 0;
+  for (const r of rets) {
+    const b = Math.floor(r / 5) * 5;
+    buckets[b] = (buckets[b] || 0) + 1;
+  }
+  const labels = Object.keys(buckets).map(b => `${b}%`);
+  const data = Object.values(buckets);
+  const colors = Object.keys(buckets).map(b => +b >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)');
+
+  const ctx = document.getElementById('distChart').getContext('2d');
+  if (distChartInst) distChartInst.destroy();
+  distChartInst = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 3 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 } }, grid: { display: false } },
+        y: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, stepSize: 1 }, grid: { color: 'rgba(30,30,46,0.4)' } }
+      }
+    }
+  });
+}
+
+function renderQuarterly(closed) {
+  if (!closed.length) return;
+  // Group by quarter of earnings date
+  const byQ = {};
+  for (const t of closed) {
+    const d = new Date(t.earningsDate);
+    const q = `${d.getFullYear()}-Q${Math.ceil((d.getMonth()+1)/3)}`;
+    if (!byQ[q]) byQ[q] = [];
+    byQ[q].push(t.returnPct);
+  }
+  const quarters = Object.keys(byQ).sort();
+  const avgRets = quarters.map(q => {
+    const r = byQ[q];
+    return +(r.reduce((a, b) => a + b, 0) / r.length).toFixed(2);
+  });
+  const colors = avgRets.map(r => r >= 0 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.6)');
+
+  const ctx = document.getElementById('qChart').getContext('2d');
+  if (qChartInst) qChartInst.destroy();
+  qChartInst = new Chart(ctx, {
+    type: 'bar',
+    data: { labels: quarters, datasets: [{ data: avgRets, backgroundColor: colors, borderRadius: 3 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 } }, grid: { display: false } },
+        y: { ticks: { color: '#5c5c72', font: { family: 'JetBrains Mono', size: 9 }, callback: v => v + '%' }, grid: { color: 'rgba(30,30,46,0.4)' } }
+      }
+    }
+  });
+}
+
+init();
+</script>
+
+</body>
+</html>
