@@ -373,7 +373,7 @@
       <table>
         <thead><tr>
           <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th><th>Exit</th>
-          <th>Entry $</th><th>Exit $</th><th>Return</th><th>Days</th><th>Reason</th>
+          <th>Entry $</th><th>Exit $</th><th>Return</th><th>Days</th><th>Progress</th>
         </tr></thead>
         <tbody id="closedTb"></tbody>
       </table>
@@ -524,14 +524,14 @@ function renderClosed(trades) {
   tb.innerHTML = trades.map(t => {
     const cls = t.returnPct >= 0 ? 'pos' : 'neg';
     const ret = `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%`;
-    const reason = t.exitReason === 'next_earnings'
-      ? '<span class="tag tag-a">EARNINGS</span>'
-      : '<span class="tag tag-g">HOLD</span>';
+    const barColor = t.returnPct >= 0 ? C.green : C.red;
+    const pct = Math.min(100, (t.daysHeld / Math.max(1, t.maxDays)) * 100);
     return `<tr>
       <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
       <td>${t.earningsDate}</td><td>${t.entryDate}</td><td>${t.exitDate}</td>
       <td>$${t.entryPrice.toFixed(2)}</td><td>$${t.exitPrice.toFixed(2)}</td>
-      <td class="${cls}">${ret}</td><td>${t.daysHeld}d</td><td>${reason}</td>
+      <td class="${cls}">${ret}</td><td>${t.daysHeld}d</td>
+      <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${barColor}"></div></div></td>
     </tr>`;
   }).join('');
 }
