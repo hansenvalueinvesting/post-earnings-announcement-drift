@@ -330,7 +330,7 @@
       <div class="chart-box"><canvas id="distChart"></canvas></div>
     </div>
     <div class="card">
-      <h2>Returns by Quarter</h2>
+      <h2>Total Returns by Quarter</h2>
       <div class="chart-box"><canvas id="qChart"></canvas></div>
     </div>
   </div>
@@ -565,9 +565,9 @@ function renderScatter(trades) {
         legend: { display: false },
         tooltip: {
           backgroundColor: '#1a1d21', padding: 10, cornerRadius: 6,
-          titleFont: { family: C.font, size: 11 },
-          bodyFont: { family: C.font, size: 12, weight: '600' },
-          titleColor: '#9aa0ab', bodyColor: '#fff',
+          titleFont: { family: C.font, size: 12, weight: '600' },
+          bodyFont: { family: C.font, size: 11 },
+          titleColor: '#fff', bodyColor: '#9aa0ab',
           callbacks: {
             title: items => items[0]?.raw?.symbol || '',
             label: c => {
@@ -577,6 +577,7 @@ function renderScatter(trades) {
           }
         }
       },
+      interaction: { mode: 'nearest', intersect: true },
       scales: {
         x: {
           type: 'time',
@@ -638,7 +639,7 @@ function renderQuarterly(closed) {
   const quarters = Object.keys(byQ).sort();
   const avgRets = quarters.map(q => {
     const r = byQ[q];
-    return +(r.reduce((a, b) => a + b, 0) / r.length).toFixed(2);
+    return +(r.reduce((a, b) => a + b, 0)).toFixed(2);
   });
   const colors = avgRets.map(r => r >= 0 ? C.green : C.red);
 
