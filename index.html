@@ -319,6 +319,19 @@
     <div id="todayBody"></div>
   </div>
 
+  <div class="card" id="openSec">
+    <h2>Open Trades <span class="badge" id="openN">0</span></h2>
+    <div class="t-wrap">
+      <table>
+        <thead><tr>
+          <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th>
+          <th>Entry $</th><th>Current $</th><th>P&L</th><th>Progress</th>
+        </tr></thead>
+        <tbody id="openTb"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="card">
     <h2>All Trades <span class="hint">return % per trade · <span style="display:inline-block;width:10px;height:10px;background:#9aa0ab;border-radius:50%;vertical-align:middle"></span> closed &nbsp;<span style="display:inline-block;width:10px;height:10px;background:#d98a00;border-radius:50%;vertical-align:middle"></span> open</span></h2>
     <div class="chart-box"><canvas id="scatterChart"></canvas></div>
@@ -343,19 +356,6 @@
           <th>Ticker</th><th>Date</th><th>In</th>
         </tr></thead>
         <tbody id="upcomingTb"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="card" id="openSec">
-    <h2>Open Trades <span class="badge" id="openN">0</span></h2>
-    <div class="t-wrap">
-      <table>
-        <thead><tr>
-          <th>Ticker</th><th>SUE</th><th>Earnings</th><th>Entry</th>
-          <th>Entry $</th><th>Current $</th><th>P&L</th><th>Progress</th>
-        </tr></thead>
-        <tbody id="openTb"></tbody>
       </table>
     </div>
   </div>
