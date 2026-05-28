@@ -504,7 +504,7 @@ function renderOpen(trades) {
     const cls = t.returnPct >= 0 ? 'pos' : 'neg';
     const pnl = t.returnPct != null ? `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%` : '—';
     const pct = Math.min(100, (t.daysHeld / Math.max(1, t.maxDays)) * 100);
-    const c = pct < 40 ? C.green : pct < 70 ? C.amber : C.red;
+    const c = t.returnPct == null ? C.tick : t.returnPct >= 0 ? C.green : C.red;
     return `<tr>
       <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
       <td>${t.earningsDate}</td><td>${t.entryDate}</td>
