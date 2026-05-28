@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Earnings Momentum</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
@@ -296,7 +297,7 @@
   <header>
     <div>
       <h1>Earnings Momentum</h1>
-      <div class="sub">Automated PEAD strategy · NASDAQ-100 · SUE top decile · 60-day hold</div>
+      <div class="sub">PEAD trade scanner · NASDAQ-100 · SUE top decile · 60-day hold</div>
     </div>
     <div class="updated">
       Last updated
@@ -307,16 +308,10 @@
   <div id="status"><div class="spinner"></div> Loading data…</div>
 
   <div class="stats">
-    <div class="stat"><div class="label">Final Value</div><div class="val mono" id="sFinal">—</div><div class="bh mono" id="bFinal"></div></div>
-    <div class="stat"><div class="label">Total Return</div><div class="val mono" id="sTotal">—</div><div class="bh mono" id="bTotal"></div></div>
-    <div class="stat"><div class="label">CAGR</div><div class="val mono" id="sCagr">—</div><div class="bh mono" id="bCagr"></div></div>
-    <div class="stat"><div class="label">Beta to QQQ</div><div class="val mono" id="sBeta">—</div><div class="bh mono" id="bBeta"></div></div>
-    <div class="stat"><div class="label">Sharpe Ratio</div><div class="val mono" id="sSharpe">—</div><div class="bh mono" id="bSharpe"></div></div>
-    <div class="stat"><div class="label">Sortino Ratio</div><div class="val mono" id="sSortino">—</div><div class="bh mono" id="bSortino"></div></div>
-    <div class="stat"><div class="label">Calmar Ratio</div><div class="val mono" id="sCalmar">—</div><div class="bh mono" id="bCalmar"></div></div>
-    <div class="stat"><div class="label">Max Drawdown</div><div class="val mono" id="sMdd">—</div><div class="bh mono" id="bMdd"></div></div>
-    <div class="stat"><div class="label">CVaR 95% (Daily)</div><div class="val mono" id="sCvar">—</div><div class="bh mono" id="bCvar"></div></div>
-    <div class="stat"><div class="label">Trades · Win %</div><div class="val mono" id="sTrades">—</div><div class="bh mono" id="bTrades"></div></div>
+    <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTrades">—</div><div class="bh mono" id="sOpenClosed"></div></div>
+    <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWinRate">—</div><div class="bh mono" id="sWinRateSub"></div></div>
+    <div class="stat"><div class="label">Avg Win</div><div class="val mono" id="sAvgWin">—</div><div class="bh mono" id="sMaxWin"></div></div>
+    <div class="stat"><div class="label">Avg Loss</div><div class="val mono" id="sAvgLoss">—</div><div class="bh mono" id="sMaxLoss"></div></div>
   </div>
 
   <div class="card" id="todaySec">
@@ -325,8 +320,8 @@
   </div>
 
   <div class="card">
-    <h2>Equity Curve <span class="hint" id="eqHint">strategy vs buy &amp; hold QQQ</span></h2>
-    <div class="chart-box"><canvas id="eqChart"></canvas></div>
+    <h2>All Trades <span class="hint">return % per trade · <span style="display:inline-block;width:10px;height:10px;background:#9aa0ab;border-radius:50%;vertical-align:middle"></span> closed &nbsp;<span style="display:inline-block;width:10px;height:10px;background:#d98a00;border-radius:50%;vertical-align:middle"></span> open</span></h2>
+    <div class="chart-box"><canvas id="scatterChart"></canvas></div>
   </div>
 
   <div class="dual">
@@ -383,7 +378,7 @@
 </div>
 
 <script>
-let eqChartInst = null, distChartInst = null, qChartInst = null;
+let scatterChartInst = null, distChartInst = null, qChartInst = null;
 
 const C = {
   green: '#18a957', red: '#e1383b', amber: '#d98a00',
@@ -408,12 +403,12 @@ async function init() {
     const closed = trades.filter(t => !t.open);
     const rets = closed.map(t => t.returnPct).filter(r => r != null);
 
-    renderStats(data, closed, rets);
+    renderStats(data);
     renderToday(data.today, data.updatedAt || data.updated);
     renderUpcoming(data.upcomingEarnings || []);
     renderOpen(open);
     renderClosed(closed);
-    renderEquity(data.equity, closed);
+    renderScatter(trades);
     renderDist(rets);
     renderQuarterly(closed);
 
@@ -424,7 +419,6 @@ async function init() {
   }
 }
 
-const money = v => '$' + Math.round(v).toLocaleString('en-US');
 const pct = (v, dp = 2, sign = false) => (sign && v > 0 ? '+' : '') + v.toFixed(dp) + '%';
 
 function setStat(id, value, cls) {
@@ -432,44 +426,23 @@ function setStat(id, value, cls) {
   el.textContent = value;
   el.className = 'val mono' + (cls ? ' ' + cls : '');
 }
-function setBH(id, text) { document.getElementById(id).textContent = text; }
 
-function renderStats(data, closed, rets) {
-  const s = data.stats, b = data.benchmark;
+function renderStats(data) {
+  const s = data.tradeStats;
+  if (!s) return;
 
-  // Fallback: compute the trade-level numbers we can without precomputed stats
-  if (!s) {
-    const wins = rets.filter(r => r > 0).length;
-    const wr = rets.length ? (wins / rets.length * 100) : 0;
-    setStat('sTrades', `${closed.length} · ${wr.toFixed(1)}%`, wr >= 50 ? 'g' : 'r');
-    ['sFinal','sTotal','sCagr','sBeta','sSharpe','sSortino','sCalmar','sMdd','sCvar']
-      .forEach(id => setStat(id, '—'));
-    return;
-  }
+  setStat('sTrades', s.total);
+  document.getElementById('sOpenClosed').textContent = `${s.open} open · ${s.closed} closed`;
 
-  setStat('sFinal', money(s.finalValue), s.finalValue >= (data.config?.startCapital || 100000) ? 'g' : 'r');
-  setStat('sTotal', pct(s.totalReturn, 2, true), s.totalReturn >= 0 ? 'g' : 'r');
-  setStat('sCagr', pct(s.cagr, 2, true), s.cagr >= 0 ? 'g' : 'r');
-  setStat('sBeta', s.beta.toFixed(2));
-  setStat('sSharpe', s.sharpe.toFixed(2), s.sharpe >= 0 ? 'g' : 'r');
-  setStat('sSortino', s.sortino.toFixed(2), s.sortino >= 0 ? 'g' : 'r');
-  setStat('sCalmar', s.calmar.toFixed(2), s.calmar >= 0 ? 'g' : 'r');
-  setStat('sMdd', pct(s.maxDrawdown, 2), 'r');
-  setStat('sCvar', pct(s.cvar95, 2), 'r');
-  setStat('sTrades', `${s.trades} · ${s.winRate}%`);
-  document.getElementById('bTrades').textContent = s.years != null ? `over ${s.years}y` : '';
+  setStat('sWinRate', s.winRate.toFixed(1) + '%', s.winRate >= 50 ? 'g' : 'r');
+  const winCount = Math.round(s.winRate / 100 * s.closed);
+  document.getElementById('sWinRateSub').textContent = `${winCount} of ${s.closed} closed`;
 
-  if (b) {
-    setBH('bFinal', 'vs B&H ' + money(b.finalValue));
-    setBH('bTotal', 'B&H ' + pct(b.totalReturn, 2, true));
-    setBH('bCagr', 'B&H ' + pct(b.cagr, 2, true));
-    setBH('bBeta', 'B&H ' + b.beta.toFixed(2));
-    setBH('bSharpe', 'B&H ' + b.sharpe.toFixed(2));
-    setBH('bSortino', 'B&H ' + b.sortino.toFixed(2));
-    setBH('bCalmar', 'B&H ' + b.calmar.toFixed(2));
-    setBH('bMdd', 'B&H ' + pct(b.maxDrawdown, 2));
-    setBH('bCvar', 'B&H ' + pct(b.cvar95, 2));
-  }
+  setStat('sAvgWin', s.avgWin > 0 ? '+' + s.avgWin.toFixed(2) + '%' : '—', 'g');
+  document.getElementById('sMaxWin').textContent = s.maxWin ? `max +${s.maxWin.toFixed(2)}%` : '';
+
+  setStat('sAvgLoss', s.avgLoss < 0 ? s.avgLoss.toFixed(2) + '%' : '—', 'r');
+  document.getElementById('sMaxLoss').textContent = s.maxLoss ? `max ${s.maxLoss.toFixed(2)}%` : '';
 }
 
 function renderToday(today, stamp) {
@@ -555,74 +528,67 @@ function renderClosed(trades) {
   }).join('');
 }
 
-function renderEquity(equity, closed) {
-  let labels, portData, benchData = null;
+function renderScatter(trades) {
+  const closedPts = trades
+    .filter(t => !t.open && t.returnPct != null && t.entryDate)
+    .map(t => ({ x: t.entryDate, y: t.returnPct, symbol: t.symbol }));
+  const openPts = trades
+    .filter(t => t.open && t.returnPct != null && t.entryDate)
+    .map(t => ({ x: t.entryDate, y: t.returnPct, symbol: t.symbol }));
 
-  if (equity && equity.dates && equity.portfolio) {
-    labels = equity.dates;
-    portData = equity.portfolio;
-    benchData = equity.benchmark || null;
-  } else {
-    // Fallback: compound closed-trade returns from a $100 base
-    if (!closed.length) return;
-    const sorted = [...closed].sort((a, b) => new Date(a.exitDate) - new Date(b.exitDate));
-    let cum = 100;
-    labels = ['Start'];
-    portData = [100];
-    for (const t of sorted) {
-      cum *= (1 + t.returnPct / 100);
-      labels.push(t.exitDate);
-      portData.push(+cum.toFixed(2));
-    }
-    document.getElementById('eqHint').textContent = 'compounded, $100 start';
-  }
+  const ctx = document.getElementById('scatterChart').getContext('2d');
+  if (scatterChartInst) scatterChartInst.destroy();
 
-  const ctx = document.getElementById('eqChart').getContext('2d');
-  if (eqChartInst) eqChartInst.destroy();
-  const grad = ctx.createLinearGradient(0, 0, 0, 280);
-  grad.addColorStop(0, 'rgba(24,169,87,0.14)');
-  grad.addColorStop(1, 'rgba(24,169,87,0)');
-
-  const datasets = [{
-    label: 'Strategy',
-    data: portData, borderColor: C.green, borderWidth: 2,
-    backgroundColor: grad, fill: true, tension: 0.25,
-    pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: C.green,
-    pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2
-  }];
-  if (benchData) {
-    datasets.push({
-      label: 'B&H QQQ',
-      data: benchData, borderColor: C.tick, borderWidth: 1.5,
-      borderDash: [5, 4], fill: false, tension: 0.25,
-      pointRadius: 0, pointHoverRadius: 4, pointHoverBackgroundColor: C.tick,
-      pointHoverBorderColor: '#fff', pointHoverBorderWidth: 2
-    });
-  }
-
-  eqChartInst = new Chart(ctx, {
-    type: 'line',
-    data: { labels, datasets },
+  scatterChartInst = new Chart(ctx, {
+    type: 'scatter',
+    data: {
+      datasets: [
+        {
+          label: 'Closed',
+          data: closedPts,
+          backgroundColor: 'rgba(154,160,171,0.55)',
+          pointRadius: 4,
+          pointHoverRadius: 6,
+        },
+        {
+          label: 'Open',
+          data: openPts,
+          backgroundColor: 'rgba(217,138,0,0.85)',
+          pointRadius: 5,
+          pointHoverRadius: 7,
+        }
+      ]
+    },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: benchData ? {
-          display: true, position: 'top', align: 'end',
-          labels: { boxWidth: 12, boxHeight: 12, font: { family: C.font, size: 11 }, color: C.tick, usePointStyle: true }
-        } : { display: false },
+        legend: { display: false },
         tooltip: {
           backgroundColor: '#1a1d21', padding: 10, cornerRadius: 6,
           titleFont: { family: C.font, size: 11 },
           bodyFont: { family: C.font, size: 12, weight: '600' },
           titleColor: '#9aa0ab', bodyColor: '#fff',
-          callbacks: { label: c => `${c.dataset.label}: $${Math.round(c.parsed.y).toLocaleString('en-US')}` }
+          callbacks: {
+            title: items => items[0]?.raw?.symbol || '',
+            label: c => {
+              const v = c.parsed.y;
+              return `${c.raw.x}  ${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+            }
+          }
         }
       },
       scales: {
-        x: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, maxTicksLimit: 8, maxRotation: 0 }, grid: { color: C.grid } },
-        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => '$' + Math.round(v).toLocaleString('en-US') }, grid: { color: C.grid } }
-      },
-      interaction: { intersect: false, mode: 'index' }
+        x: {
+          type: 'time',
+          time: { unit: 'month', tooltipFormat: 'yyyy-MM-dd', displayFormats: { month: 'MMM yy' } },
+          ticks: { color: C.tick, font: { family: C.font, size: 10 }, maxTicksLimit: 10, maxRotation: 0 },
+          grid: { color: C.grid }
+        },
+        y: {
+          ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => v + '%' },
+          grid: { color: C.grid }
+        }
+      }
     }
   });
 }
