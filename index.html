@@ -689,25 +689,23 @@ function renderWinLoss(closed) {
     data: {
       labels: quarters,
       datasets: [
-        { label: 'Wins', data: quarters.map(q => byQ[q].wins), backgroundColor: C.green, borderRadius: 3, maxBarThickness: 20 },
-        { label: 'Losses', data: quarters.map(q => byQ[q].losses), backgroundColor: C.red, borderRadius: 3, maxBarThickness: 20 }
+        { label: 'Wins', data: quarters.map(q => byQ[q].wins), backgroundColor: C.green, borderRadius: 3, maxBarThickness: 28 },
+        { label: 'Losses', data: quarters.map(q => -byQ[q].losses), backgroundColor: C.red, borderRadius: 3, maxBarThickness: 28 }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: {
-          display: true, position: 'top', align: 'end',
-          labels: { boxWidth: 10, boxHeight: 10, font: { family: C.font, size: 10 }, color: C.tick, usePointStyle: true }
-        },
+        legend: { display: false },
         tooltip: {
-          backgroundColor: '#1a1d21', padding: 9, cornerRadius: 6,
-          titleFont: { family: C.font, size: 11 }, bodyFont: { family: C.font, size: 12 }
+          backgroundColor: '#1a1d21', padding: 9, cornerRadius: 6, displayColors: false,
+          titleFont: { family: C.font, size: 11 }, bodyFont: { family: C.font, size: 12 },
+          callbacks: { label: c => `${c.dataset.label}: ${Math.abs(c.parsed.y)}` }
         }
       },
       scales: {
-        x: { ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { display: false } },
-        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, stepSize: 1 }, grid: { color: C.grid } }
+        x: { stacked: true, ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { display: false } },
+        y: { stacked: true, ticks: { color: C.tick, font: { family: C.font, size: 10 }, stepSize: 1, callback: v => Math.abs(v) }, grid: { color: C.grid } }
       }
     }
   });
