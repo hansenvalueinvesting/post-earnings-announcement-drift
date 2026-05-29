@@ -1,28 +1,33 @@
 #!/usr/bin/env python3
 """
-Fetch NASDAQ-100 + S&P 500 earnings surprise data + historical prices via yfinance.
+Fetch Russell 2000 earnings surprise data + historical prices via yfinance.
 Simulates a PEAD strategy and outputs per-trade data + summary stats to data.json.
 
 Methodology notes (see README / PR for rationale):
-  * Point-in-time membership: signals are only generated for a stock if it was
-    actually an index member on the earnings date. The current S&P 500 list is
-    rewound through Wikipedia's "changes" table so we don't (a) trade names that
-    hadn't yet been added or (b) silently drop names that were later removed
-    (survivorship bias). NASDAQ-100-only names are treated as members throughout
-    (we lack a clean point-in-time source for them).
+  * Universe: the Russell 2000 small-cap index. Constituents are pulled live from
+    the iShares IWM ETF holdings file. Every successful pull refreshes a curated
+    fallback list (russell2000_fallback.json) so an offline run can still produce
+    data; the dashboard shows when that fallback was last refreshed.
+  * Membership is treated as "current members throughout": today's Russell 2000
+    list is assumed to be members across the whole lookback window. The index
+    only reconstitutes annually (June) and has no clean point-in-time / "changes"
+    feed, so unlike a survivorship-corrected approach this carries some
+    survivorship bias. (This mirrors how NASDAQ-100 names were handled before.)
   * SUE is the EPS surprise scaled by the stock's price at the earnings date
     (a unitless, cross-sectionally comparable "surprise yield").
   * Ranking uses a TRAILING distribution: a signal is kept only if its SUE is in
     the top decile of signals observed in the prior 365 days -- no look-ahead.
-  * Returns are reported both raw and market-adjusted (abnormal = stock - SPY
+  * Returns are reported both raw and market-adjusted (abnormal = stock - IWM
     over the same holding window), with a t-stat on the abnormal returns.
 """
 
+import csv
 import json
 import math
 import bisect
 import datetime
 import time
+import urllib.request
 from collections import deque
 from zoneinfo import ZoneInfo
 
@@ -33,266 +38,135 @@ LOOKBACK_YEARS = 5
 HOLD_DAYS = 60
 UPCOMING_DAYS = 30
 
-BENCHMARK = "SPY"        # market proxy for abnormal-return calculation
+BENCHMARK = "IWM"        # Russell 2000 ETF — market proxy for abnormal returns
 TRAILING_DAYS = 365      # window for the trailing SUE distribution
 MIN_TRAILING = 50        # min prior signals before we trust a percentile
 TOP_PCTILE = 0.90        # keep signals at/above this percentile of the trailing window
 
-# NDX-100 tickers (reliable fallback, updated periodically)
-NDX100 = [
-    "AAPL","ABNB","ADBE","ADI","ADP","ADSK","AEP","AMAT","AMGN","AMZN",
-    "ANSS","APP","ARM","ASML","AVGO","AZN","BIIB","BKNG","BKR","CCEP",
-    "CDNS","CDW","CEG","CHTR","CMCSA","COIN","COST","CPRT","CRWD","CSCO",
-    "CSGP","CTAS","CTSH","DASH","DDOG","DLTR","DXCM","EA","EXC","FANG",
-    "FAST","FTNT","GEHC","GFS","GILD","GOOG","GOOGL","HON","IDXX","ILMN",
-    "INTC","INTU","ISRG","KDP","KHC","KLAC","LIN","LRCX","LULU","MAR",
-    "MCHP","MDB","MDLZ","MELI","META","MNST","MRNA","MRVL","MSFT","MU",
-    "NFLX","NVDA","NXPI","ODFL","ON","ORLY","PANW","PAYX","PCAR","PDD",
-    "PEP","PYPL","QCOM","REGN","ROP","ROST","SBUX","SMCI","SNPS","TEAM",
-    "TMUS","TSLA","TTD","TTWO","TXN","VRSK","VRTX","WBD","WDAY","XEL","ZS"
-]
+# iShares Russell 2000 ETF (IWM) holdings CSV — the live constituent source.
+IWM_HOLDINGS_URL = (
+    "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
+    "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
+)
+# Self-refreshing curated fallback. Rewritten on every successful live pull and
+# committed alongside data.json, so offline runs use the most recent known list.
+FALLBACK_FILE = "russell2000_fallback.json"
 
-# S&P 500 tickers (reliable fallback, updated periodically). Dots are
-# normalized to dashes to match yfinance (e.g. BRK.B -> BRK-B).
-SP500 = [
-    "A","AAPL","ABBV","ABNB","ABT","ACGL","ACN","ADBE","ADI","ADM",
-    "ADP","ADSK","AEE","AEP","AES","AFL","AIG","AIZ","AJG","AKAM",
-    "ALB","ALGN","ALL","ALLE","AMAT","AMCR","AMD","AME","AMGN","AMP",
-    "AMT","AMZN","ANET","ANSS","AON","AOS","APA","APD","APH","APTV",
-    "ARE","ATO","AVB","AVGO","AVY","AWK","AXON","AXP","AZO","BA",
-    "BAC","BALL","BAX","BBY","BDX","BEN","BF-B","BG","BIIB","BK","BKNG",
-    "BKR","BLDR","BLK","BMY","BR","BRK-B","BRO","BSX","BX","BXP",
-    "C","CAG","CAH","CARR","CAT","CB","CBOE","CBRE","CCI","CCL",
-    "CDNS","CDW","CE","CEG","CF","CFG","CHD","CHRW","CHTR","CI",
-    "CINF","CL","CLX","CMCSA","CME","CMG","CMI","CMS","CNC","CNP",
-    "COF","COIN","COO","COP","COR","COST","CPAY","CPB","CPRT","CPT",
-    "CRL","CRM","CRWD","CSCO","CSGP","CSX","CTAS","CTRA","CTSH","CTVA",
-    "CVS","CVX","CZR","D","DAL","DASH","DAY","DD","DE","DECK",
-    "DELL","DG","DGX","DHI","DHR","DIS","DLR","DLTR","DOC","DOV",
-    "DOW","DPZ","DRI","DTE","DUK","DVA","DVN","DXCM","EA","EBAY",
-    "ECL","ED","EFX","EG","EIX","EL","ELV","EMN","EMR","ENPH",
-    "EOG","EPAM","EQIX","EQR","EQT","ERIE","ES","ESS","ETN","ETR",
-    "EVRG","EW","EXC","EXPD","EXPE","EXR","F","FANG","FAST","FCX",
-    "FDS","FDX","FE","FFIV","FI","FICO","FIS","FITB","FOX","FOXA",
-    "FRT","FSLR","FTNT","FTV","GD","GDDY","GE","GEHC","GEN","GEV",
-    "GILD","GIS","GL","GLW","GM","GNRC","GOOG","GOOGL","GPC","GPN",
-    "GRMN","GS","GWW","HAL","HAS","HBAN","HCA","HD","HES","HIG",
-    "HII","HLT","HOLX","HON","HPE","HPQ","HRL","HSIC","HST","HSY",
-    "HUBB","HUM","HWM","IBM","ICE","IDXX","IEX","IFF","INCY","INTC",
-    "INTU","INVH","IP","IPG","IQV","IR","IRM","ISRG","IT","ITW",
-    "IVZ","J","JBHT","JBL","JCI","JKHY","JNJ","JNPR","JPM","K",
-    "KDP","KEY","KEYS","KHC","KIM","KKR","KLAC","KMB","KMI","KMX",
-    "KO","KR","KVUE","L","LDOS","LEN","LH","LHX","LII","LIN",
-    "LKQ","LLY","LMT","LNT","LOW","LRCX","LULU","LUV","LVS","LW",
-    "LYB","LYV","MA","MAA","MAR","MAS","MCD","MCHP","MCK","MCO",
-    "MDLZ","MDT","MET","META","MGM","MHK","MKC","MKTX","MLM","MMC",
-    "MMM","MNST","MO","MOH","MOS","MPC","MPWR","MRK","MRNA","MS",
-    "MSCI","MSFT","MSI","MTB","MTCH","MTD","MU","NCLH","NDAQ","NDSN",
-    "NEE","NEM","NFLX","NI","NKE","NOC","NOW","NRG","NSC","NTAP",
-    "NTRS","NUE","NVDA","NVR","NWS","NWSA","NXPI","O","ODFL","OKE",
-    "OMC","ON","ORCL","ORLY","OTIS","OXY","PANW","PARA","PAYC","PAYX",
-    "PCAR","PCG","PEG","PEP","PFE","PFG","PG","PGR","PH","PHM",
-    "PKG","PLD","PM","PNC","PNR","PNW","PODD","POOL","PPG","PPL",
-    "PRU","PSA","PSX","PTC","PWR","PYPL","QCOM","RCL","REG","REGN",
-    "RF","RJF","RL","RMD","ROK","ROL","ROP","ROST","RSG","RTX",
-    "RVTY","SBAC","SBUX","SCHW","SHW","SJM","SLB","SMCI","SNA","SNPS",
-    "SO","SOLV","SPG","SPGI","SRE","STE","STLD","STT","STX","STZ",
-    "SWK","SWKS","SYF","SYK","SYY","T","TAP","TDG","TDY","TECH",
-    "TEL","TER","TFC","TFX","TGT","TJX","TMO","TMUS","TPR","TRGP",
-    "TRMB","TROW","TRV","TSCO","TSLA","TSN","TT","TTWO","TXN","TXT",
-    "TYL","UAL","UBER","UDR","UHS","ULTA","UNH","UNP","UPS","URI",
-    "USB","V","VICI","VLO","VLTO","VMC","VRSK","VRSN","VRTX","VST",
-    "VTR","VTRS","VZ","WAB","WAT","WBA","WBD","WDC","WEC","WELL",
-    "WFC","WM","WMB","WMT","WRB","WST","WTW","WY","WYNN","XEL",
-    "XOM","XYL","YUM","ZBH","ZBRA","ZTS"
-]
-
-# Fallback S&P 500 membership changes (date, added_ticker, removed_ticker) used
-# only when the live Wikipedia "changes" table can't be scraped. Covers major
-# removals over the last ~5 years so survivorship add-back still works offline.
-# Tickers are normalized to yfinance form (dots -> dashes).
-SP500_CHANGES_FALLBACK = [
-    ("2025-07-09", "", "JNPR"),
-    ("2024-10-01", "", "BBWI"),
-    ("2024-09-23", "", "BIO"),
-    ("2024-04-03", "", "ZION"),
-    ("2024-03-18", "", "ROL"),
-    ("2024-03-18", "", "DISH"),
-    ("2023-10-18", "", "DXC"),
-    ("2023-10-02", "", "LNC"),
-    ("2023-08-25", "", "AAP"),
-    ("2023-06-20", "", "FRC"),    # First Republic
-    ("2023-05-04", "", "SIVB"),   # SVB Financial
-    ("2023-03-15", "", "SBNY"),   # Signature Bank
-    ("2023-03-15", "", "LUMN"),
-    ("2023-02-01", "", "VNO"),
-    ("2022-12-19", "", "ABMD"),
-    ("2022-10-12", "", "TWTR"),   # Twitter (taken private)
-    ("2022-06-02", "", "UA"),
-    ("2022-04-04", "", "PBCT"),
-    ("2022-02-15", "", "XLNX"),   # Xilinx (acquired by AMD)
-    ("2022-01-20", "", "CERN"),   # Cerner (acquired by Oracle)
-    ("2021-12-20", "", "KSU"),    # Kansas City Southern
-    ("2021-10-12", "", "CXO"),
-    ("2021-07-21", "", "ALXN"),   # Alexion (acquired by AstraZeneca)
-    ("2021-04-20", "", "VAR"),    # Varian (acquired by Siemens)
-    ("2021-03-22", "", "FLIR"),
-    ("2021-01-21", "", "FLS"),
-    ("2020-12-21", "", "TIF"),    # Tiffany (acquired by LVMH)
-    ("2020-10-12", "", "NBL"),
-    ("2020-04-03", "", "MAC"),
+# Seed fallback — a curated set of liquid Russell 2000 names used only if the
+# live pull fails AND the fallback file is missing/unreadable. In normal
+# operation FALLBACK_FILE supersedes this with the full live membership.
+RUSSELL2000_SEED = [
+    "AAON","ABCB","ABM","ACAD","ACIW","ACLS","ADMA","AEIS","AGYS","AKR",
+    "ALEX","ALG","ALKS","AMBA","AMN","AMWD","ANDE","AORT","APAM","APLE",
+    "APOG","ARCB","AROC","ASGN","ASTH","ATEN","ATGE","AVAV","AWR","AXNX",
+    "BANF","BANR","BCPC","BDC","BGS","BHE","BJRI","BKE","BL","BLMN",
+    "BMI","BOOT","BOX","BRC","BRKL","CAKE","CALM","CARG","CARS","CASH",
+    "CATY","CBRL","CBU","CCOI","CENT","CENX","CERT","CHCO","CHEF","CLW",
+    "CNK","CNMD","COLB","COLL","COOP","CORT","CPK","CRC","CRVL","CSGS",
+    "CTRE","CTS","CVCO","CWST","CWT","DAN","DCOM","DDD","DEA","DFIN",
+    "DIOD","DNOW","DOCN","DORM","DXPE","ECPG","EGBN","EIG","ELF","ENS",
+    "ENV","EPAC","EPRT","ESE","EXLS","EXPO","EXTR","EZPW","FBK","FCF",
+    "FCPT","FELE","FFBC","FHB","FIZZ","FORM","FOXF","FSS","FTDR","FUL",
+    "FULT","GBX","GEO","GFF","GMS","GNW","GOLF","GPI","GSHD","GTY",
+    "HASI","HCC","HCSG","HELE","HI","HLIO","HMN","HNI","HOMB","HUBG",
+    "HWKN","ICUI","IIPR","INDB","INSW","IOSP","IPAR","IRDM","ITGR","ITRI",
+    "JACK","JBT","JJSF","JOE","KAI","KALU","KFY","KMT","KN","KWR",
+    "LAD","LBRT","LCII","LGND","LKFN","LMAT","LNN","LOB","LRN","LXP",
+    "MATX","MCY","MGEE","MGY","MMS","MMSI","MODG","MTX","MYRG","NARI",
+    "NBHC","NEO","NEOG","NHC","NMIH","NPO","NSIT","NWBI","NWE","OFG",
+    "OII","OMCL","ONB","OSIS","OTTR","OXM","PATK","PBH","PECO","PFBC",
+    "PFS","PINC","PIPR","PLXS","PNTG","POWL","PRA","PRGS","PRIM","PRK",
+    "PTGX","PZZA","QLYS","RAMP","RDN","RDNT","REZI","RMBS","ROCK","RUSHA",
+    "RXO","SABR","SAFT","SAH","SANM","SBCF","SCL","SDGR","SFBS","SFNC",
+    "SHAK","SHOO","SIGI","SITM","SKT","SKYW","SLAB","SLG","SM","SMPL",
+    "SNEX","SONO","SPSC","SPT","SPTN","SR","SSB","SSD","STBA","STC",
+    "STEP","STRA","SXI","SXT","TBBK","TCBK","TDS","TFIN","TGNA","THRM",
+    "TMP","TNC","TPH","TRMK","TRN","TRNO","TRUP","TTMI","UCBI","UE",
+    "UFPI","UMBF","UNF","UPBD","URBN","USLM","USPH","VC","VCEL","VCYT",
+    "VECO","VIAV","VICR","VIRT","VRRM","VRTS","VSCO","WABC","WAFD","WD",
+    "WERN","WEN","WGO","WHD","WK","WS","WSFS","WT","WWW","XHR",
+    "XNCR","XPEL","YELP","ZD","ZWS"
 ]
 
 
-def _scrape_tickers(url, match):
-    """Scrape ticker symbols from a Wikipedia table. Returns [] on failure."""
-    tables = pd.read_html(
-        url, match=match, storage_options={"User-Agent": "Mozilla/5.0"}
-    )
-    if tables:
-        df = tables[0]
-        for col in df.columns:
-            if 'ticker' in str(col).lower() or 'symbol' in str(col).lower():
-                tickers = [str(t).strip().replace('.', '-')
-                           for t in df[col].dropna() if isinstance(t, str)]
-                if len(tickers) > 50:
-                    return tickers
-    return []
+def _clean_ticker(t):
+    """Normalize a raw ticker to yfinance form, or '' if it isn't an equity symbol."""
+    t = str(t).strip().strip('"').upper().replace('.', '-')
+    if not t or t in ('-', 'CASH', 'USD'):
+        return ''
+    if all(c.isalnum() or c == '-' for c in t) and len(t) <= 6 and any(c.isalpha() for c in t):
+        return t
+    return ''
 
 
-def get_ndx100():
-    """Try Wikipedia first, fall back to hardcoded list. Returns (tickers, live)."""
-    try:
-        tickers = _scrape_tickers("https://en.wikipedia.org/wiki/Nasdaq-100", "Ticker")
-        if tickers:
-            print(f"Got {len(tickers)} NASDAQ-100 tickers from Wikipedia")
-            return tickers, True
-    except Exception as e:
-        print(f"NASDAQ-100 Wikipedia failed ({e}), using fallback list")
-    return NDX100, False
+def _scrape_russell2000():
+    """Download current IWM (Russell 2000 ETF) equity holdings from iShares.
 
+    The CSV has a few preamble lines, then a header row beginning with "Ticker",
+    then one row per holding, then a footer of disclaimer text. Returns a list of
+    yfinance-normalized tickers, or [] on failure."""
+    req = urllib.request.Request(IWM_HOLDINGS_URL, headers={"User-Agent": "Mozilla/5.0"})
+    raw = urllib.request.urlopen(req, timeout=60).read().decode("utf-8-sig", "replace")
+    lines = raw.splitlines()
 
-def get_sp500():
-    """Try Wikipedia first, fall back to hardcoded list. Returns (tickers, live)."""
-    try:
-        tickers = _scrape_tickers(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "Symbol")
-        if tickers:
-            print(f"Got {len(tickers)} S&P 500 tickers from Wikipedia")
-            return tickers, True
-    except Exception as e:
-        print(f"S&P 500 Wikipedia failed ({e}), using fallback list")
-    return SP500, False
-
-
-def _parse_date(s):
-    """Parse a free-form date string to ISO 'YYYY-MM-DD', or None."""
-    try:
-        d = pd.to_datetime(str(s), errors='coerce')
-        if pd.isna(d):
-            return None
-        return d.date().isoformat()
-    except Exception:
-        return None
-
-
-def _scrape_sp500_changes():
-    """Scrape Wikipedia's S&P 500 'selected changes' table.
-
-    Returns a list of (date_iso, added_ticker, removed_ticker) tuples. Empty on
-    failure (caller falls back to SP500_CHANGES_FALLBACK)."""
-    try:
-        tables = pd.read_html(
-            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            storage_options={"User-Agent": "Mozilla/5.0"})
-    except Exception as e:
-        print(f"S&P 500 changes scrape failed ({e})")
+    start = next((i for i, ln in enumerate(lines)
+                  if ln.lower().lstrip('"').startswith('ticker')), None)
+    if start is None:
         return []
 
-    for df in tables:
-        flat = [tuple(str(x) for x in c) if isinstance(c, tuple) else (str(c),)
-                for c in df.columns]
-        text = ' '.join('|'.join(t).lower() for t in flat)
-        if not ('added' in text and 'removed' in text and 'date' in text):
+    tickers = []
+    for row in csv.DictReader(lines[start:]):
+        asset = (row.get('Asset Class') or '').strip().strip('"').lower()
+        if asset and asset != 'equity':
             continue
-
-        date_col = added_col = removed_col = None
-        for col, t in zip(df.columns, flat):
-            j = '|'.join(t).lower()
-            if 'date' in j and date_col is None:
-                date_col = col
-            if 'added' in j and 'ticker' in j and added_col is None:
-                added_col = col
-            if 'removed' in j and 'ticker' in j and removed_col is None:
-                removed_col = col
-        if date_col is None or (added_col is None and removed_col is None):
-            continue
-
-        def _cell(row, col):
-            if col is None:
-                return ''
-            v = str(row[col]).strip().replace('.', '-')
-            return '' if v.lower() in ('nan', '') else v
-
-        changes = []
-        for _, row in df.iterrows():
-            d = _parse_date(row[date_col])
-            if not d:
-                continue
-            changes.append((d, _cell(row, added_col), _cell(row, removed_col)))
-        if changes:
-            print(f"Got {len(changes)} S&P 500 membership changes from Wikipedia")
-            return changes
-    return []
+        tk = _clean_ticker(row.get('Ticker') or '')
+        if tk:
+            tickers.append(tk)
+    return sorted(set(tickers))
 
 
-def build_membership(sp_current, cutoff_str):
-    """Build a point-in-time S&P 500 membership checker.
-
-    Returns (events, extra_tickers, live):
-      * events: ticker -> sorted list of (date_iso, 'added'|'removed')
-      * extra_tickers: removed-since-cutoff names not in the current list, which
-        should be added to the fetch universe to undo survivorship bias.
-      * live: True if the changes table was scraped from Wikipedia (vs fallback).
-    """
-    changes = _scrape_sp500_changes()
-    live = bool(changes)
-    if not live:
-        changes = SP500_CHANGES_FALLBACK
-        print(f"Using fallback list of {len(changes)} S&P 500 changes")
-
-    events, extra = {}, set()
-    for d, add, rem in changes:
-        if add:
-            events.setdefault(add, []).append((d, 'added'))
-        if rem:
-            events.setdefault(rem, []).append((d, 'removed'))
-            if rem not in sp_current and d >= cutoff_str:
-                extra.add(rem)
-    for t in events:
-        events[t].sort()
-    return events, extra, live
+def _save_fallback(tickers, date_str):
+    """Persist the latest live membership as the curated fallback."""
+    try:
+        with open(FALLBACK_FILE, 'w') as f:
+            json.dump({'updated': date_str, 'tickers': sorted(set(tickers))}, f, indent=1)
+        print(f"Refreshed {FALLBACK_FILE} ({len(tickers)} names, as of {date_str})")
+    except Exception as e:
+        print(f"Could not write {FALLBACK_FILE} ({e})")
 
 
-def make_membership_checker(ndx_current, sp_current, sp_events):
-    """Return is_member(ticker, date_iso) for point-in-time index membership.
+def _load_fallback():
+    """Load the curated fallback. Returns (tickers, updated_date_or_None)."""
+    try:
+        with open(FALLBACK_FILE) as f:
+            d = json.load(f)
+        tickers = [t for t in (_clean_ticker(x) for x in d.get('tickers', [])) if t]
+        if tickers:
+            return sorted(set(tickers)), d.get('updated')
+    except Exception as e:
+        print(f"Could not read {FALLBACK_FILE} ({e})")
+    return sorted(set(RUSSELL2000_SEED)), None
 
-    NASDAQ-100 members are assumed to be members throughout the window (no clean
-    point-in-time source). S&P 500 membership is reconstructed from `sp_events`:
-    the state on `date` equals the 'before' state of the earliest change after
-    `date`, else the current membership.
-    """
-    def is_member(ticker, date_iso):
-        if ticker in ndx_current:
-            return True
-        evs = sp_events.get(ticker)
-        if not evs:
-            return ticker in sp_current
-        after = [e for e in evs if e[0] > date_iso]
-        if not after:
-            return ticker in sp_current
-        return after[0][1] == 'removed'
-    return is_member
+
+def get_russell2000(today_str):
+    """Resolve the Russell 2000 universe.
+
+    Tries the live iShares IWM holdings file first; on success it refreshes the
+    curated fallback and returns (tickers, live=True, fallback_date=None). On
+    failure it loads the fallback list and returns (tickers, False, its date)."""
+    try:
+        tickers = _scrape_russell2000()
+        if len(tickers) > 1000:
+            print(f"Got {len(tickers)} Russell 2000 holdings from iShares IWM")
+            _save_fallback(tickers, today_str)
+            return tickers, True, None
+        print(f"iShares IWM returned only {len(tickers)} names — using fallback")
+    except Exception as e:
+        print(f"iShares IWM download failed ({e}) — using fallback")
+    tickers, date = _load_fallback()
+    print(f"Using fallback list of {len(tickers)} names"
+          + (f" (last refreshed {date})" if date else " (seed)"))
+    return tickers, False, date
 
 
 def fetch_earnings(sym, today_str):
@@ -402,16 +276,10 @@ def main():
 
     print(f"=== Earnings Momentum Fetch | {today_str} | Lookback {LOOKBACK_YEARS}y ===\n")
 
-    # ── Universe + point-in-time membership ──
-    ndx, ndx_live = get_ndx100()
-    sp, sp_live = get_sp500()
-    ndx_set, sp_set = set(ndx), set(sp)
-    sp_events, extra, changes_live = build_membership(sp_set, cutoff_str)
-    is_member = make_membership_checker(ndx_set, sp_set, sp_events)
-
-    tickers = sorted(set(ndx) | set(sp) | extra)
-    print(f"Universe: {len(tickers)} tickers "
-          f"({len(extra)} removed names added back to undo survivorship bias)\n")
+    # ── Universe (Russell 2000; current members throughout) ──
+    russell, russell_live, fallback_date = get_russell2000(today_str)
+    tickers = sorted(set(russell))
+    print(f"Universe: {len(tickers)} Russell 2000 tickers\n")
 
     # ── Fetch earnings ──
     earnings_hist = {}
@@ -467,19 +335,19 @@ def main():
         if (i + 1) % 10 == 0:
             time.sleep(0.5)
 
-    spy_idx = price_idx.get(BENCHMARK)
-    if not spy_idx:
+    bench_idx = price_idx.get(BENCHMARK)
+    if not bench_idx:
         print(f"WARNING: no {BENCHMARK} prices — abnormal returns unavailable")
 
-    # ── Build price-scaled SUE events (membership-filtered) ──
+    # ── Build price-scaled SUE events ──
+    # Every Russell 2000 ticker is treated as a member throughout the window, so
+    # no point-in-time membership filter is applied here.
     events = []
     for sym, hist in earnings_hist.items():
         idx = price_idx.get(sym)
         if not idx:
             continue
         for e in hist:
-            if not is_member(sym, e['date']):
-                continue
             px = _price_asof(idx, e['date'])
             if not px or px <= 0:
                 continue
@@ -493,7 +361,7 @@ def main():
                 'sue': round(e['surprise'] / px * 100, 4),
             })
     events.sort(key=lambda x: x['date'])
-    print(f"\nMembership-filtered, price-scaled signals: {len(events)}")
+    print(f"\nPrice-scaled signals: {len(events)}")
 
     if not events:
         with open('data.json', 'w') as f:
@@ -535,7 +403,7 @@ def main():
                 exit_reason = 'next_earnings'
         target_exit_str = target_exit_dt.strftime('%Y-%m-%d')
 
-        spy_entry = _price_asof(spy_idx, entry['date']) if spy_idx else None
+        bench_entry = _price_asof(bench_idx, entry['date']) if bench_idx else None
 
         if target_exit_dt > today_dt:
             # Open trade.
@@ -543,7 +411,7 @@ def main():
             ret = round(((cur['close'] / entry['close']) - 1) * 100, 2) if cur else None
             path = [round((p['close'] / entry['close'] - 1) * 100, 2)
                     for p in px if entry['date'] <= p['date'] <= today_str]
-            bench_ret, abn_ret = _bench_abn(spy_idx, spy_entry,
+            bench_ret, abn_ret = _bench_abn(bench_idx, bench_entry,
                                             cur['date'] if cur else None, ret)
             trades.append({
                 'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
@@ -564,7 +432,7 @@ def main():
             ret = round(((exit_bar['close'] / entry['close']) - 1) * 100, 2)
             path = [round((p['close'] / entry['close'] - 1) * 100, 2)
                     for p in px if entry['date'] <= p['date'] <= exit_bar['date']]
-            bench_ret, abn_ret = _bench_abn(spy_idx, spy_entry, exit_bar['date'], ret)
+            bench_ret, abn_ret = _bench_abn(bench_idx, bench_entry, exit_bar['date'], ret)
             trades.append({
                 'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
                 'entryDate': entry['date'], 'entryPrice': entry['close'],
@@ -594,7 +462,7 @@ def main():
         'maxWin': round(max(wins), 2) if wins else 0,
         'avgLoss': round(sum(losses) / len(losses), 2) if losses else 0,
         'maxLoss': round(min(losses), 2) if losses else 0,
-        # Market-adjusted (abnormal vs SPY) — the metric that actually reflects drift.
+        # Market-adjusted (abnormal vs IWM) — the metric that actually reflects drift.
         'avgAbnReturn': round(sum(closed_abn) / len(closed_abn), 2) if closed_abn else None,
         'avgBenchReturn': round(sum(closed_bench) / len(closed_bench), 2) if closed_bench else None,
         'abnWinRate': round(len([r for r in closed_abn if r > 0]) / len(closed_abn) * 100, 1) if closed_abn else None,
@@ -616,17 +484,20 @@ def main():
 
     # ── Live data-source status (shown in the dashboard header) ──
     n_priced = len([s for s in prices if s != BENCHMARK])
+    if russell_live:
+        russell_detail = 'Russell 2000 constituents (IWM)'
+        russell_count = f'{len(tickers)} names'
+    else:
+        russell_detail = ('Russell 2000 fallback · refreshed '
+                          + (fallback_date or 'unknown'))
+        russell_count = f'{len(tickers)} names'
     data_sources = [
         {'name': 'Yahoo Finance', 'detail': 'earnings & prices',
          'live': bool(prices), 'count': f'{n_priced}/{len(tickers)} tickers'},
         {'name': f'Yahoo Finance · {BENCHMARK}', 'detail': 'benchmark',
-         'live': bool(spy_idx), 'count': None},
-        {'name': 'Wikipedia', 'detail': 'NASDAQ-100 constituents',
-         'live': ndx_live, 'count': f'{len(ndx_set)} names'},
-        {'name': 'Wikipedia', 'detail': 'S&P 500 constituents',
-         'live': sp_live, 'count': f'{len(sp_set)} names'},
-        {'name': 'Wikipedia', 'detail': 'S&P 500 membership changes',
-         'live': changes_live, 'count': f'+{len(extra)} restored'},
+         'live': bool(bench_idx), 'count': None},
+        {'name': 'iShares IWM', 'detail': russell_detail,
+         'live': russell_live, 'count': russell_count},
     ]
 
     output = {
@@ -635,7 +506,7 @@ def main():
         'config': {
             'lookbackYears': LOOKBACK_YEARS,
             'holdDays': HOLD_DAYS,
-            'universe': 'NASDAQ-100 + S&P 500 (point-in-time)',
+            'universe': 'Russell 2000 (current members)',
             'benchmark': BENCHMARK,
             'sue': 'EPS surprise / price at earnings (%)',
             'ranking': f'top decile of trailing {TRAILING_DAYS}d distribution',
@@ -651,14 +522,14 @@ def main():
     print(f"\nWrote data.json ({len(json.dumps(output))} bytes). Done.")
 
 
-def _bench_abn(spy_idx, spy_entry, exit_date, ret):
+def _bench_abn(bench_idx, bench_entry, exit_date, ret):
     """Benchmark return over [entry, exit] and abnormal return (stock - bench)."""
-    if not spy_idx or spy_entry is None or not exit_date or ret is None:
+    if not bench_idx or bench_entry is None or not exit_date or ret is None:
         return None, None
-    spy_exit = _price_asof(spy_idx, exit_date)
-    if not spy_exit or spy_entry <= 0:
+    bench_exit = _price_asof(bench_idx, exit_date)
+    if not bench_exit or bench_entry <= 0:
         return None, None
-    bench = round((spy_exit / spy_entry - 1) * 100, 2)
+    bench = round((bench_exit / bench_entry - 1) * 100, 2)
     return bench, round(ret - bench, 2)
 
 
