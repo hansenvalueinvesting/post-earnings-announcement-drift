@@ -76,28 +76,6 @@
     margin-top: 2px;
   }
 
-  /* ── STATUS ── */
-  #status {
-    font-size: 12.5px;
-    color: var(--text-soft);
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 11px 16px;
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    box-shadow: var(--shadow);
-  }
-  .spinner {
-    width: 13px; height: 13px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.7s linear infinite;
-    flex-shrink: 0;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── STAT GRID ── */
   .stats {
@@ -318,8 +296,6 @@
     </div>
   </header>
 
-  <div id="status"><div class="spinner"></div> Loading data…</div>
-
   <div class="stats">
     <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTrades">—</div><div class="bh mono" id="sOpenClosed"></div></div>
     <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWinRate">—</div><div class="bh mono" id="sWinRateSub"></div></div>
@@ -415,10 +391,7 @@ async function init() {
     if (!resp.ok) throw new Error('data.json not found');
     const data = await resp.json();
 
-    if (data.error) {
-      document.getElementById('status').textContent = `Error: ${data.error}`;
-      return;
-    }
+    if (data.error) { console.error(data.error); return; }
 
     document.getElementById('updated').textContent = data.updatedAt || data.updated;
     const trades = data.trades || [];
@@ -436,11 +409,8 @@ async function init() {
     renderDist(rets);
     renderQuarterly(closed);
     renderWinLoss(closed);
-
-    document.getElementById('status').innerHTML =
-      `${trades.length} trades loaded — ${open.length} open, ${closed.length} closed · as of ${data.updatedAt || data.updated}`;
   } catch (e) {
-    document.getElementById('status').textContent = `Failed to load: ${e.message}`;
+    console.error('Failed to load:', e.message);
   }
 }
 
