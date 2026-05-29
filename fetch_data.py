@@ -161,28 +161,28 @@ def _scrape_tickers(url, match):
 
 
 def get_ndx100():
-    """Try Wikipedia first, fall back to hardcoded list."""
+    """Try Wikipedia first, fall back to hardcoded list. Returns (tickers, live)."""
     try:
         tickers = _scrape_tickers("https://en.wikipedia.org/wiki/Nasdaq-100", "Ticker")
         if tickers:
             print(f"Got {len(tickers)} NASDAQ-100 tickers from Wikipedia")
-            return tickers
+            return tickers, True
     except Exception as e:
         print(f"NASDAQ-100 Wikipedia failed ({e}), using fallback list")
-    return NDX100
+    return NDX100, False
 
 
 def get_sp500():
-    """Try Wikipedia first, fall back to hardcoded list."""
+    """Try Wikipedia first, fall back to hardcoded list. Returns (tickers, live)."""
     try:
         tickers = _scrape_tickers(
             "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", "Symbol")
         if tickers:
             print(f"Got {len(tickers)} S&P 500 tickers from Wikipedia")
-            return tickers
+            return tickers, True
     except Exception as e:
         print(f"S&P 500 Wikipedia failed ({e}), using fallback list")
-    return SP500
+    return SP500, False
 
 
 def _parse_date(s):
@@ -249,13 +249,16 @@ def _scrape_sp500_changes():
 def build_membership(sp_current, cutoff_str):
     """Build a point-in-time S&P 500 membership checker.
 
-    Returns (events, extra_tickers):
+    Returns (events, extra_tickers, live):
       * events: ticker -> sorted list of (date_iso, 'added'|'removed')
       * extra_tickers: removed-since-cutoff names not in the current list, which
         should be added to the fetch universe to undo survivorship bias.
+      * live: True if the changes table was scraped from Wikipedia (vs fallback).
     """
-    changes = _scrape_sp500_changes() or SP500_CHANGES_FALLBACK
-    if changes is SP500_CHANGES_FALLBACK:
+    changes = _scrape_sp500_changes()
+    live = bool(changes)
+    if not live:
+        changes = SP500_CHANGES_FALLBACK
         print(f"Using fallback list of {len(changes)} S&P 500 changes")
 
     events, extra = {}, set()
@@ -268,7 +271,7 @@ def build_membership(sp_current, cutoff_str):
                 extra.add(rem)
     for t in events:
         events[t].sort()
-    return events, extra
+    return events, extra, live
 
 
 def make_membership_checker(ndx_current, sp_current, sp_events):
@@ -400,10 +403,10 @@ def main():
     print(f"=== Earnings Momentum Fetch | {today_str} | Lookback {LOOKBACK_YEARS}y ===\n")
 
     # ── Universe + point-in-time membership ──
-    ndx = get_ndx100()
-    sp = get_sp500()
+    ndx, ndx_live = get_ndx100()
+    sp, sp_live = get_sp500()
     ndx_set, sp_set = set(ndx), set(sp)
-    sp_events, extra = build_membership(sp_set, cutoff_str)
+    sp_events, extra, changes_live = build_membership(sp_set, cutoff_str)
     is_member = make_membership_checker(ndx_set, sp_set, sp_events)
 
     tickers = sorted(set(ndx) | set(sp) | extra)
@@ -611,6 +614,21 @@ def main():
         'exited': [t for t in trades if t.get('exitDate') == today_str],
     }
 
+    # ── Live data-source status (shown in the dashboard header) ──
+    n_priced = len([s for s in prices if s != BENCHMARK])
+    data_sources = [
+        {'name': 'Yahoo Finance', 'detail': 'earnings & prices',
+         'live': bool(prices), 'count': f'{n_priced}/{len(tickers)} tickers'},
+        {'name': f'Yahoo Finance · {BENCHMARK}', 'detail': 'benchmark',
+         'live': bool(spy_idx), 'count': None},
+        {'name': 'Wikipedia', 'detail': 'NASDAQ-100 constituents',
+         'live': ndx_live, 'count': f'{len(ndx_set)} names'},
+        {'name': 'Wikipedia', 'detail': 'S&P 500 constituents',
+         'live': sp_live, 'count': f'{len(sp_set)} names'},
+        {'name': 'Wikipedia', 'detail': 'S&P 500 membership changes',
+         'live': changes_live, 'count': f'+{len(extra)} restored'},
+    ]
+
     output = {
         'updated': today_str,
         'updatedAt': updated_at,
@@ -623,6 +641,7 @@ def main():
             'ranking': f'top decile of trailing {TRAILING_DAYS}d distribution',
         },
         'tradeStats': trade_stats,
+        'dataSources': data_sources,
         'upcomingEarnings': upcoming_earnings,
         'today': today_activity,
         'trades': trades
