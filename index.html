@@ -297,7 +297,7 @@
   </header>
 
   <div class="stats">
-    <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTrades">—</div><div class="bh mono" id="sOpenClosed"></div></div>
+    <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTrades">—</div><div class="bh mono" id="sOpenClosed"></div><div class="bh mono" id="sAvgReturn"></div></div>
     <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWinRate">—</div><div class="bh mono" id="sWinRateSub"></div></div>
     <div class="stat"><div class="label">Avg Win</div><div class="val mono" id="sAvgWin">—</div><div class="bh mono" id="sMaxWin"></div></div>
     <div class="stat"><div class="label">Avg Loss</div><div class="val mono" id="sAvgLoss">—</div><div class="bh mono" id="sMaxLoss"></div></div>
@@ -428,6 +428,8 @@ function renderStats(data) {
 
   setStat('sTrades', s.total);
   document.getElementById('sOpenClosed').textContent = `${s.open} open · ${s.closed} closed`;
+  const avgR = s.avgReturn;
+  document.getElementById('sAvgReturn').textContent = avgR != null ? `avg ${avgR >= 0 ? '+' : ''}${avgR.toFixed(2)}% / trade` : '';
 
   setStat('sWinRate', s.winRate.toFixed(1) + '%', s.winRate >= 50 ? 'g' : 'r');
   const winCount = Math.round(s.winRate / 100 * s.closed);
