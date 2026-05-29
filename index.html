@@ -62,6 +62,32 @@
     color: var(--text-soft);
     margin-top: 6px;
   }
+  header .sub .src-label {
+    color: var(--text-dim);
+    margin-right: 4px;
+  }
+  .src {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    padding: 2px 8px;
+    margin: 3px 5px 0 0;
+    border: 1px solid var(--border, #2a2e37);
+    border-radius: 999px;
+    color: var(--text-soft);
+    white-space: nowrap;
+  }
+  .src .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+  }
+  .src .dot.up { background: #2bbf6a; box-shadow: 0 0 0 2px rgba(43,191,106,.18); }
+  .src .dot.down { background: #d98a00; box-shadow: 0 0 0 2px rgba(217,138,0,.18); }
+  .src .src-name { color: var(--text); }
+  .src .src-meta { color: var(--text-dim); }
   header .updated {
     text-align: right;
     font-size: 12px;
@@ -288,7 +314,7 @@
   <header>
     <div>
       <h1>Post Earnings Announcement Drift</h1>
-      <div class="sub">earnings momentum trade scanner · NASDAQ-100 + S&P 500 (point-in-time) · price-scaled SUE, trailing top decile · 60-day hold · market-adjusted vs SPY</div>
+      <div class="sub" id="dataSources"></div>
     </div>
     <div class="updated">
       Last updated
@@ -401,6 +427,7 @@ async function init() {
     if (data.tradeStats && data.tradeStats.avgReturn == null && rets.length)
       data.tradeStats.avgReturn = +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2);
 
+    renderDataSources(data.dataSources);
     renderStats(data);
     renderToday(data.today, data.updatedAt || data.updated);
     renderUpcoming(data.upcomingEarnings || []);
@@ -422,6 +449,26 @@ function setStat(id, value, cls) {
   const el = document.getElementById(id);
   el.textContent = value;
   el.className = 'val mono' + (cls ? ' ' + cls : '');
+}
+
+function renderDataSources(sources) {
+  const el = document.getElementById('dataSources');
+  if (!el) return;
+  if (!sources || !sources.length) {
+    // Older data.json without source tracking — fall back to a plain note.
+    el.textContent = 'earnings momentum trade scanner · live data sources unavailable';
+    return;
+  }
+  const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  const chips = sources.map(s => {
+    const cls = s.live ? 'up' : 'down';
+    const title = s.live ? 'live' : 'fallback / unavailable';
+    const detail = s.detail ? `<span class="src-meta">${esc(s.detail)}</span>` : '';
+    const count = s.count ? `<span class="src-meta">· ${esc(s.count)}</span>` : '';
+    return `<span class="src" title="${title}"><span class="dot ${cls}"></span>` +
+           `<span class="src-name">${esc(s.name)}</span>${detail}${count}</span>`;
+  }).join('');
+  el.innerHTML = `<span class="src-label">live data sources</span>${chips}`;
 }
 
 function renderStats(data) {
