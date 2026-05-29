@@ -279,6 +279,7 @@ def main():
         'open': len(open_t),
         'closed': len(closed_t),
         'winRate': round(len(wins) / len(closed_rets) * 100, 1) if closed_rets else 0,
+        'avgReturn': round(sum(closed_rets) / len(closed_rets), 2) if closed_rets else 0,
         'avgWin': round(sum(wins) / len(wins), 2) if wins else 0,
         'maxWin': round(max(wins), 2) if wins else 0,
         'avgLoss': round(sum(losses) / len(losses), 2) if losses else 0,
