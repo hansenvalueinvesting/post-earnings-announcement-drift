@@ -475,6 +475,8 @@ function renderStats(data) {
   const s = data.tradeStats;
   if (!s) return;
 
+  const bench = (data.config && data.config.benchmark) || 'IWM';
+
   setStat('sTrades', s.total);
   document.getElementById('sOpenClosed').textContent = `${s.open} open · ${s.closed} closed`;
   const avgR = s.avgReturn;
@@ -482,14 +484,14 @@ function renderStats(data) {
   let abnTxt = '';
   if (s.avgAbnReturn != null) {
     const a = s.avgAbnReturn;
-    abnTxt = ` · ${a >= 0 ? '+' : ''}${a.toFixed(2)}% vs SPY`;
+    abnTxt = ` · ${a >= 0 ? '+' : ''}${a.toFixed(2)}% vs ${bench}`;
     if (s.tStat != null) abnTxt += ` (t=${s.tStat.toFixed(2)})`;
   }
   document.getElementById('sAvgReturn').textContent = rawTxt + abnTxt;
 
   setStat('sWinRate', s.winRate.toFixed(1) + '%', s.winRate >= 50 ? 'g' : 'r');
   const winCount = Math.round(s.winRate / 100 * s.closed);
-  const abnWinTxt = s.abnWinRate != null ? ` · ${s.abnWinRate.toFixed(1)}% vs SPY` : '';
+  const abnWinTxt = s.abnWinRate != null ? ` · ${s.abnWinRate.toFixed(1)}% vs ${bench}` : '';
   document.getElementById('sWinRateSub').textContent = `${winCount} of ${s.closed} closed${abnWinTxt}`;
 
   setStat('sAvgWin', s.avgWin > 0 ? '+' + s.avgWin.toFixed(2) + '%' : '—', 'g');
