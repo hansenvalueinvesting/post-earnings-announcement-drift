@@ -169,6 +169,16 @@
     border-radius: 20px;
   }
 
+  .tog-group { display: flex; gap: 4px; margin-left: auto; }
+  .tog {
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text-soft); font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px; font-weight: 500; padding: 2px 10px;
+    border-radius: 20px; cursor: pointer; transition: all 0.15s;
+  }
+  .tog:hover { border-color: var(--text-dim); color: var(--text); }
+  .tog.active { background: var(--text); color: var(--surface); border-color: var(--text); }
+
   /* ── DUAL / TRIPLE CHART ── */
   .dual, .triple {
     display: grid;
@@ -336,7 +346,12 @@
   </div>
 
   <div class="card">
-    <h2>All Trades <span class="hint">return % per trade · <span style="display:inline-block;width:10px;height:10px;background:#9aa0ab;border-radius:50%;vertical-align:middle"></span> closed &nbsp;<span style="display:inline-block;width:10px;height:10px;background:#d98a00;border-radius:50%;vertical-align:middle"></span> open</span></h2>
+    <h2>All Trades <span class="hint">return % per trade · <span style="display:inline-block;width:10px;height:10px;background:#9aa0ab;border-radius:50%;vertical-align:middle"></span> closed &nbsp;<span style="display:inline-block;width:10px;height:10px;background:#d98a00;border-radius:50%;vertical-align:middle"></span> open</span>
+      <span class="tog-group">
+        <button class="tog active" id="togSue" onclick="setScatterMode('sue')">SUE</button>
+        <button class="tog" id="togTime" onclick="setScatterMode('time')">Time</button>
+      </span>
+    </h2>
     <div class="chart-box"><canvas id="scatterChart"></canvas></div>
   </div>
 
@@ -386,6 +401,7 @@
 
 <script>
 let scatterChartInst = null, distChartInst = null, qChartInst = null, wlChartInst = null;
+let scatterMode = 'sue', scatterTrades = [];
 
 const C = {
   green: '#18a957', red: '#e1383b', amber: '#d98a00',
@@ -415,7 +431,8 @@ async function init() {
     renderUpcoming(data.upcomingEarnings || []);
     renderOpen(open);
     renderClosed(closed);
-    renderScatter(trades);
+    scatterTrades = trades;
+    renderScatter(trades, scatterMode);
     renderDist(rets);
     renderQuarterly(closed);
     renderWinLoss(closed);
@@ -555,35 +572,37 @@ function pathToGradient(path) {
   return `linear-gradient(to right, ${stops.join(', ')})`;
 }
 
-function renderScatter(trades) {
+function setScatterMode(mode) {
+  scatterMode = mode;
+  document.getElementById('togSue').classList.toggle('active', mode === 'sue');
+  document.getElementById('togTime').classList.toggle('active', mode === 'time');
+  renderScatter(scatterTrades, mode);
+}
+
+function renderScatter(trades, mode) {
+  const bySue = mode === 'sue';
   const closedPts = trades
-    .filter(t => !t.open && t.returnPct != null && t.entryDate)
-    .map(t => ({ x: t.entryDate, y: t.returnPct, symbol: t.symbol }));
+    .filter(t => !t.open && t.returnPct != null)
+    .map(t => ({ x: bySue ? t.sue : t.entryDate, y: t.returnPct, symbol: t.symbol, sue: t.sue, date: t.entryDate }));
   const openPts = trades
-    .filter(t => t.open && t.returnPct != null && t.entryDate)
-    .map(t => ({ x: t.entryDate, y: t.returnPct, symbol: t.symbol }));
+    .filter(t => t.open && t.returnPct != null)
+    .map(t => ({ x: bySue ? t.sue : t.entryDate, y: t.returnPct, symbol: t.symbol, sue: t.sue, date: t.entryDate }));
 
   const ctx = document.getElementById('scatterChart').getContext('2d');
   if (scatterChartInst) scatterChartInst.destroy();
+
+  const xScale = bySue
+    ? { type: 'linear', title: { display: true, text: 'SUE Score', color: C.tick, font: { family: C.font, size: 10 } },
+        ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { color: C.grid } }
+    : { type: 'time', time: { unit: 'month', tooltipFormat: 'yyyy-MM-dd', displayFormats: { month: 'MMM yy' } },
+        ticks: { color: C.tick, font: { family: C.font, size: 10 }, maxTicksLimit: 10, maxRotation: 0 }, grid: { color: C.grid } };
 
   scatterChartInst = new Chart(ctx, {
     type: 'scatter',
     data: {
       datasets: [
-        {
-          label: 'Closed',
-          data: closedPts,
-          backgroundColor: 'rgba(154,160,171,0.55)',
-          pointRadius: 4,
-          pointHoverRadius: 6,
-        },
-        {
-          label: 'Open',
-          data: openPts,
-          backgroundColor: 'rgba(217,138,0,0.85)',
-          pointRadius: 5,
-          pointHoverRadius: 7,
-        }
+        { label: 'Closed', data: closedPts, backgroundColor: 'rgba(154,160,171,0.55)', pointRadius: 4, pointHoverRadius: 6 },
+        { label: 'Open',   data: openPts,   backgroundColor: 'rgba(217,138,0,0.85)',   pointRadius: 5, pointHoverRadius: 7 }
       ]
     },
     options: {
@@ -599,23 +618,16 @@ function renderScatter(trades) {
             title: items => items[0]?.raw?.symbol || '',
             label: c => {
               const v = c.parsed.y;
-              return `${c.raw.x}  ${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+              const detail = bySue ? `SUE ${c.raw.sue?.toFixed(2)}  ` : `${c.raw.date}  `;
+              return `${detail}${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
             }
           }
         }
       },
       interaction: { mode: 'nearest', intersect: true },
       scales: {
-        x: {
-          type: 'time',
-          time: { unit: 'month', tooltipFormat: 'yyyy-MM-dd', displayFormats: { month: 'MMM yy' } },
-          ticks: { color: C.tick, font: { family: C.font, size: 10 }, maxTicksLimit: 10, maxRotation: 0 },
-          grid: { color: C.grid }
-        },
-        y: {
-          ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => v + '%' },
-          grid: { color: C.grid }
-        }
+        x: xScale,
+        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => v + '%' }, grid: { color: C.grid } }
       }
     }
   });
