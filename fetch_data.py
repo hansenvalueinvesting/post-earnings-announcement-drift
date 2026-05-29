@@ -8,6 +8,7 @@ import json
 import math
 import datetime
 import time
+from zoneinfo import ZoneInfo
 
 import yfinance as yf
 import pandas as pd
@@ -114,10 +115,10 @@ def compute_sue(earnings):
 
 
 def main():
-    now = datetime.datetime.now(datetime.timezone.utc)
+    now = datetime.datetime.now(ZoneInfo('America/New_York'))
     today = now.date()
     today_str = str(today)
-    updated_at = now.strftime('%Y-%m-%d %H:%M:%S UTC')
+    updated_at = now.strftime('%Y-%m-%d %H:%M:%S ET')
     cutoff = today - datetime.timedelta(days=LOOKBACK_YEARS * 365)
     cutoff_str = str(cutoff)
     upcoming_cutoff = str(today + datetime.timedelta(days=UPCOMING_DAYS))
