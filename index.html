@@ -275,6 +275,37 @@
     color: var(--text-dim);
   }
 
+  /* ── INPUTS ── */
+  .inputs-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 20px;
+    margin-top: 22px;
+  }
+  .input-group { display: flex; align-items: center; gap: 12px; }
+  .input-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .slider-wrap { display: flex; align-items: center; gap: 10px; }
+  .slider-wrap input[type=range] {
+    width: 160px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .slider-val {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    min-width: 34px;
+  }
+
   @media (max-width: 760px) {
     header { padding-top: 28px; }
     header .updated { text-align: left; }
@@ -301,6 +332,17 @@
     <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWinRate">—</div><div class="bh mono" id="sWinRateSub"></div></div>
     <div class="stat"><div class="label">Avg Win</div><div class="val mono" id="sAvgWin">—</div><div class="bh mono" id="sMaxWin"></div></div>
     <div class="stat"><div class="label">Avg Loss</div><div class="val mono" id="sAvgLoss">—</div><div class="bh mono" id="sMaxLoss"></div></div>
+  </div>
+
+  <div class="inputs-bar">
+    <div class="input-group">
+      <span class="input-label">Hold Period</span>
+      <div class="slider-wrap">
+        <input type="range" id="holdSlider" min="5" max="60" value="30" step="1"
+               oninput="updateWithHold(+this.value)">
+        <span class="slider-val" id="holdVal">30d</span>
+      </div>
+    </div>
   </div>
 
   <div class="card" id="todaySec">
@@ -377,7 +419,43 @@
 
 <script>
 let scatterChartInst = null, distChartInst = null, qChartInst = null, wlChartInst = null;
-let scatterMode = 'sue', scatterTrades = [];
+let scatterMode = 'sue', scatterTrades = [], allTrades = [], holdDays = 30;
+
+function calToIdx(calDays) {
+  return Math.max(0, Math.round(calDays * 252 / 365) - 1);
+}
+
+function adjRet(trade, hDays) {
+  if (!trade.path || !trade.path.length) return trade.returnPct;
+  const idx = Math.min(calToIdx(hDays), trade.path.length - 1);
+  return trade.path[idx];
+}
+
+function updateWithHold(hDays) {
+  holdDays = hDays;
+  document.getElementById('holdVal').textContent = hDays + 'd';
+  const open = allTrades.filter(t => t.open);
+  const closed = allTrades.filter(t => !t.open).map(t => ({ ...t, returnPct: adjRet(t, hDays) }));
+  const rets = closed.map(t => t.returnPct).filter(r => r != null);
+  const wins = rets.filter(r => r > 0);
+  const losses = rets.filter(r => r <= 0);
+  const adjStats = {
+    total: allTrades.length, open: open.length, closed: closed.length,
+    winRate: rets.length ? +(wins.length / rets.length * 100).toFixed(1) : 0,
+    avgReturn: rets.length ? +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2) : 0,
+    avgWin:  wins.length   ? +(wins.reduce((a, b) => a + b, 0)   / wins.length).toFixed(2)   : 0,
+    maxWin:  wins.length   ? +Math.max(...wins).toFixed(2)   : 0,
+    avgLoss: losses.length ? +(losses.reduce((a, b) => a + b, 0) / losses.length).toFixed(2) : 0,
+    maxLoss: losses.length ? +Math.min(...losses).toFixed(2) : 0,
+  };
+  renderStats({ tradeStats: adjStats });
+  renderClosed(closed);
+  scatterTrades = [...open, ...closed];
+  renderScatter(scatterTrades, scatterMode);
+  renderDist(rets);
+  renderQuarterly(closed);
+  renderWinLoss(closed);
+}
 
 const C = {
   green: '#18a957', red: '#e1383b', amber: '#d98a00',
@@ -397,20 +475,11 @@ async function init() {
     const trades = data.trades || [];
     const open = trades.filter(t => t.open);
     const closed = trades.filter(t => !t.open);
-    const rets = closed.map(t => t.returnPct).filter(r => r != null);
-    if (data.tradeStats && data.tradeStats.avgReturn == null && rets.length)
-      data.tradeStats.avgReturn = +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2);
-
-    renderStats(data);
+    allTrades = trades;
     renderToday(data.today, data.updatedAt || data.updated);
     renderUpcoming(data.upcomingEarnings || []);
     renderOpen(open);
-    renderClosed(closed);
-    scatterTrades = trades;
-    renderScatter(trades, scatterMode);
-    renderDist(rets);
-    renderQuarterly(closed);
-    renderWinLoss(closed);
+    updateWithHold(holdDays);
   } catch (e) {
     console.error('Failed to load:', e.message);
   }
