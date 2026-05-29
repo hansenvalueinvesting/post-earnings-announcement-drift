@@ -398,6 +398,8 @@ async function init() {
     const open = trades.filter(t => t.open);
     const closed = trades.filter(t => !t.open);
     const rets = closed.map(t => t.returnPct).filter(r => r != null);
+    if (data.tradeStats && data.tradeStats.avgReturn == null && rets.length)
+      data.tradeStats.avgReturn = +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2);
 
     renderStats(data);
     renderToday(data.today, data.updatedAt || data.updated);
