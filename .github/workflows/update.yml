@@ -23,7 +23,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install yfinance pandas lxml html5lib
+        run: pip install yfinance pandas lxml html5lib tzdata
 
       - name: Fetch earnings data
         run: python fetch_data.py
