@@ -25,6 +25,42 @@ from zoneinfo import ZoneInfo
 import yfinance as yf
 import pandas as pd
 
+# Yahoo increasingly serves empty/4xx responses to datacenter IPs (e.g. CI
+# runners), which makes every ticker look "delisted" and zeroes out the run.
+# A browser-impersonating curl_cffi session gets past most of that; fall back
+# to yfinance's default session if curl_cffi isn't installed.
+try:
+    from curl_cffi import requests as _cffi_requests
+    _SESSION = _cffi_requests.Session(impersonate="chrome")
+    print("Using curl_cffi browser-impersonation session")
+except Exception as _e:  # curl_cffi missing or failed to init
+    _SESSION = None
+    print(f"curl_cffi unavailable ({_e}); using yfinance default session")
+
+
+def _ticker(sym):
+    return yf.Ticker(sym, session=_SESSION) if _SESSION else yf.Ticker(sym)
+
+
+def _retry(fn, label, tries=3, base=1.5):
+    """Call fn() with retries + exponential backoff.
+
+    Treats a None/empty result as retryable (Yahoo often returns an empty body
+    on a soft rate-limit). Returns the last result — possibly empty — once the
+    retries are exhausted, so callers keep their existing empty-handling."""
+    out = None
+    for i in range(tries):
+        try:
+            out = fn()
+            if out is not None and (not hasattr(out, '__len__') or len(out)):
+                return out
+        except Exception as e:
+            print(f"({label} retry {i + 1} err: {e})", end=" ", flush=True)
+        if i < tries - 1:
+            time.sleep(base * (2 ** i))
+    return out
+
+
 LOOKBACK_YEARS = 5
 HOLD_DAYS = 60
 UPCOMING_DAYS = 30
@@ -76,8 +112,8 @@ def load_tickers():
 def fetch_earnings(sym, today_str):
     """Fetch earnings dates. Returns confirmed history (with EPS) and upcoming dates."""
     try:
-        tk = yf.Ticker(sym)
-        df = tk.get_earnings_dates(limit=28)
+        tk = _ticker(sym)
+        df = _retry(lambda: tk.get_earnings_dates(limit=28), f"{sym} earnings")
         if df is None or df.empty:
             return {'history': [], 'upcoming': []}
 
@@ -110,7 +146,8 @@ def fetch_earnings(sym, today_str):
 def fetch_prices(sym, start):
     """Fetch daily close prices."""
     try:
-        df = yf.Ticker(sym).history(start=start, auto_adjust=True)
+        df = _retry(lambda: _ticker(sym).history(start=start, auto_adjust=True),
+                    f"{sym} prices")
         if df is None or df.empty:
             return []
         return [{'date': d.strftime('%Y-%m-%d'), 'close': round(float(r['Close']), 2)}
@@ -231,10 +268,7 @@ def main():
     print(f"\nEarnings signals (all events): {len(events)}")
 
     if not events:
-        with open('data.json', 'w') as f:
-            json.dump({'trades': [], 'updated': today_str, 'updatedAt': updated_at,
-                       'upcomingEarnings': upcoming_earnings, 'error': 'No data'}, f)
-        print("No data. Wrote empty data.json.")
+        preserve_last_known_good(today_str, updated_at, upcoming_earnings)
         return
 
     # ── Simulate trades (one per earnings event) ──
@@ -386,6 +420,41 @@ def _bench_abn(bench_idx, bench_entry, exit_date, ret):
         return None, None
     bench = round((bench_exit / bench_entry - 1) * 100, 2)
     return bench, round(ret - bench, 2)
+
+
+def preserve_last_known_good(today_str, updated_at, upcoming_earnings):
+    """A refresh that returns zero events is almost always a transient upstream
+    block (Yahoo rate-limiting the runner), not a real "no trades" state.
+
+    Rather than overwriting good data with an empty error page — which blanks the
+    dashboard — keep the last-known-good trades and flag them stale so the UI can
+    say so. Only fall back to the empty error payload if there's no prior data."""
+    try:
+        with open('data.json') as f:
+            prev = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        prev = None
+
+    if prev and prev.get('trades') and not prev.get('error'):
+        prev['updatedAt'] = updated_at
+        prev['stale'] = True
+        prev['dataWarning'] = (
+            "Live refresh returned no data (Yahoo Finance is likely rate-limiting "
+            "this run); showing last-known-good trades from "
+            f"{prev.get('updated', 'a previous run')}."
+        )
+        # Upcoming earnings don't depend on price history, so refresh if we got any.
+        if upcoming_earnings:
+            prev['upcomingEarnings'] = upcoming_earnings
+        with open('data.json', 'w') as f:
+            json.dump(prev, f)
+        print(f"No new data — preserved {len(prev['trades'])} last-known-good "
+              "trades (marked stale).")
+    else:
+        with open('data.json', 'w') as f:
+            json.dump({'trades': [], 'updated': today_str, 'updatedAt': updated_at,
+                       'upcomingEarnings': upcoming_earnings, 'error': 'No data'}, f)
+        print("No data and no prior snapshot. Wrote empty data.json.")
 
 
 def _tstat(xs):

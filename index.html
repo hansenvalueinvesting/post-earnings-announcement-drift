@@ -459,6 +459,11 @@ async function init() {
       'The latest data refresh did not return any trades, so the dashboard ' +
       'is showing empty states. This usually resolves on the next scheduled ' +
       'update. <span class="mono">(' + String(data.error) + ')</span>');
+  } else if (data.stale || data.dataWarning) {
+    // Data loaded fine but the last refresh fell back to a prior snapshot.
+    console.warn('data.json is stale:', data.dataWarning);
+    showNotice('<strong>Showing last-known-good data.</strong> ' +
+      (data.dataWarning ? '<span class="mono">(' + String(data.dataWarning) + ')</span>' : ''));
   }
 
   document.getElementById('updated').textContent = data.updatedAt || data.updated || '—';
