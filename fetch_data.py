@@ -80,6 +80,13 @@ MIN_SUE = 0.1
 
 BENCHMARK = "SPY"        # broad-market proxy for abnormal-return calculation
 
+# Persistent, ever-growing log of CLOSED trades. Each scan only simulates the
+# trailing LOOKBACK_YEARS window, but closed trades are immutable historical
+# facts, so we accumulate them here keyed by (symbol, earningsDate) and keep
+# them forever. The dashboard then shows the full log (all history we've ever
+# recorded) plus the current open trades, instead of just the last 5 years.
+TRADE_LOG_FILE = "trades_log.json"
+
 # Curated, user-editable watchlist. The dashboard's "Watchlist" chip links here.
 TICKERS_FILE = "tickers.txt"
 WATCHLIST_URL = (
@@ -361,6 +368,27 @@ def main():
                 'maxDays': HOLD_DAYS, 'exitReason': exit_reason, 'open': False
             })
 
+    # ── Merge this scan's closed trades into the persistent log ──
+    # Closed trades are immutable facts: record each once (upserting refreshes
+    # any still inside the scan window) and keep them forever. We then display
+    # the full log of closed trades plus the live open trades, so the dashboard
+    # accumulates all history rather than only the trailing LOOKBACK_YEARS.
+    trade_log = load_trade_log()
+    new_closed = 0
+    for t in trades:
+        if not t['open']:
+            key = (t['symbol'], t['earningsDate'])
+            if key not in trade_log:
+                new_closed += 1
+            trade_log[key] = t
+    logged_closed = save_trade_log(trade_log)
+    open_now = [t for t in trades if t['open']]
+    print(f"Trade log: {len(logged_closed)} closed trades total "
+          f"({new_closed} new this scan), {len(open_now)} open.")
+
+    # Full display universe: every closed trade ever recorded + live open trades.
+    trades = logged_closed + open_now
+
     open_t = [t for t in trades if t['open']]
     closed_t = [t for t in trades if not t['open']]
     closed_rets = [t['returnPct'] for t in closed_t if t['returnPct'] is not None]
@@ -476,6 +504,27 @@ def preserve_last_known_good(today_str, updated_at, upcoming_earnings):
             json.dump({'trades': [], 'updated': today_str, 'updatedAt': updated_at,
                        'upcomingEarnings': upcoming_earnings, 'error': 'No data'}, f)
         print("No data and no prior snapshot. Wrote empty data.json.")
+
+
+def load_trade_log():
+    """Load the persistent closed-trade log as a dict keyed by (symbol, earningsDate).
+
+    Returns {} if the log doesn't exist yet (first run) or is unreadable."""
+    try:
+        with open(TRADE_LOG_FILE) as f:
+            recs = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+    return {(t['symbol'], t['earningsDate']): t for t in recs if not t.get('open')}
+
+
+def save_trade_log(log):
+    """Persist the closed-trade log (sorted by earnings date) and return the
+    sorted list of records."""
+    recs = sorted(log.values(), key=lambda t: (t['earningsDate'], t['symbol']))
+    with open(TRADE_LOG_FILE, 'w') as f:
+        json.dump(recs, f)
+    return recs
 
 
 def _tstat(xs):
