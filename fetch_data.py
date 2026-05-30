@@ -133,26 +133,44 @@ def _download_iwm_csv():
 def _scrape_russell2000():
     """Download current IWM (Russell 2000 ETF) equity holdings from iShares.
 
-    The CSV has a few preamble lines, then a header row beginning with "Ticker",
-    then one row per holding, then a footer of disclaimer text. Returns a list of
-    yfinance-normalized tickers, or [] on failure."""
+    The CSV has a few preamble lines, then a header row containing "Ticker",
+    one row per holding, then a footer of disclaimer text. Robustly locates the
+    header row (the Ticker column isn't guaranteed to be first) and reads the
+    Ticker / Asset Class columns by name. Returns (tickers, debug) where debug is
+    a short string describing what was parsed (or why nothing was)."""
     raw = _download_iwm_csv()
-    lines = raw.splitlines()
+    rows = list(csv.reader(raw.splitlines()))
 
-    start = next((i for i, ln in enumerate(lines)
-                  if ln.lower().lstrip('"').startswith('ticker')), None)
-    if start is None:
-        return []
+    # Locate the header row: the first row containing a cell equal to "ticker".
+    header_i = col_tk = col_ac = None
+    for i, row in enumerate(rows):
+        norm = [c.strip().strip('"').lower() for c in row]
+        if 'ticker' in norm:
+            header_i = i
+            col_tk = norm.index('ticker')
+            col_ac = norm.index('asset class') if 'asset class' in norm else None
+            break
+
+    if header_i is None:
+        # No recognizable header — report what we actually received so we can
+        # tell an HTML bot-challenge page apart from an unexpected CSV layout.
+        head = raw.lstrip()[:60].replace('\n', ' ').replace('\r', ' ')
+        is_html = '<html' in raw[:2000].lower() or '<!doctype' in raw[:2000].lower()
+        kind = 'HTML/non-CSV' if is_html else 'no Ticker header'
+        return [], f'{kind}, {len(raw)}B, starts: {head!r}'
 
     tickers = []
-    for row in csv.DictReader(lines[start:]):
-        asset = (row.get('Asset Class') or '').strip().strip('"').lower()
-        if asset and asset != 'equity':
+    for row in rows[header_i + 1:]:
+        if col_tk >= len(row):
             continue
-        tk = _clean_ticker(row.get('Ticker') or '')
+        if col_ac is not None and col_ac < len(row):
+            asset = row[col_ac].strip().strip('"').lower()
+            if asset and asset != 'equity':
+                continue
+        tk = _clean_ticker(row[col_tk])
         if tk:
             tickers.append(tk)
-    return sorted(set(tickers))
+    return sorted(set(tickers)), f'header@{header_i}, {len(tickers)} tickers'
 
 
 def _save_fallback(tickers, date_str):
@@ -186,13 +204,13 @@ def get_russell2000(today_str):
     On failure it loads the fallback list and returns (tickers, False, its date,
     status) where status is a short human-readable reason the live pull failed."""
     try:
-        tickers = _scrape_russell2000()
+        tickers, debug = _scrape_russell2000()
         if len(tickers) > 1000:
             print(f"Got {len(tickers)} Russell 2000 holdings from iShares IWM")
             _save_fallback(tickers, today_str)
             return tickers, True, None, 'ok'
-        status = f'parsed only {len(tickers)} rows'
-        print(f"iShares IWM returned only {len(tickers)} names — using fallback")
+        status = debug
+        print(f"iShares IWM yielded too few names ({debug}) — using fallback")
     except Exception as e:
         code = getattr(e, 'code', None)
         status = f'HTTP {code}' if code else f'{type(e).__name__}'
