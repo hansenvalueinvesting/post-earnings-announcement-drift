@@ -44,10 +44,25 @@ MIN_TRAILING = 50        # min prior signals before we trust a percentile
 TOP_PCTILE = 0.90        # keep signals at/above this percentile of the trailing window
 
 # iShares Russell 2000 ETF (IWM) holdings CSV — the live constituent source.
+# The CSV is downloaded from the ajax endpoint linked off the product page.
+IWM_PRODUCT_URL = (
+    "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
+)
 IWM_HOLDINGS_URL = (
     "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
     "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
 )
+# A bare request gets a 403 from iShares' bot protection, so send a full
+# browser-like header set (incl. a Referer to the product page) and retry.
+IWM_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
+    "Accept": "text/csv,application/csv,text/plain,*/*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": IWM_PRODUCT_URL,
+    "Connection": "keep-alive",
+}
+
 # Self-refreshing curated fallback. Rewritten on every successful live pull and
 # committed alongside data.json, so offline runs use the most recent known list.
 FALLBACK_FILE = "russell2000_fallback.json"
@@ -99,14 +114,29 @@ def _clean_ticker(t):
     return ''
 
 
+def _download_iwm_csv():
+    """GET the IWM holdings CSV with browser headers, retrying transient/403 errors.
+
+    Returns the decoded CSV text. Raises the last error if every attempt fails."""
+    last_err = None
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(IWM_HOLDINGS_URL, headers=IWM_HEADERS)
+            return urllib.request.urlopen(req, timeout=60).read().decode("utf-8-sig", "replace")
+        except Exception as e:
+            last_err = e
+            print(f"  iShares attempt {attempt + 1}/3 failed ({e})")
+            time.sleep(2 * (attempt + 1))
+    raise last_err
+
+
 def _scrape_russell2000():
     """Download current IWM (Russell 2000 ETF) equity holdings from iShares.
 
     The CSV has a few preamble lines, then a header row beginning with "Ticker",
     then one row per holding, then a footer of disclaimer text. Returns a list of
     yfinance-normalized tickers, or [] on failure."""
-    req = urllib.request.Request(IWM_HOLDINGS_URL, headers={"User-Agent": "Mozilla/5.0"})
-    raw = urllib.request.urlopen(req, timeout=60).read().decode("utf-8-sig", "replace")
+    raw = _download_iwm_csv()
     lines = raw.splitlines()
 
     start = next((i for i, ln in enumerate(lines)
