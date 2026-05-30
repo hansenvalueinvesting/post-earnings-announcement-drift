@@ -182,21 +182,25 @@ def get_russell2000(today_str):
     """Resolve the Russell 2000 universe.
 
     Tries the live iShares IWM holdings file first; on success it refreshes the
-    curated fallback and returns (tickers, live=True, fallback_date=None). On
-    failure it loads the fallback list and returns (tickers, False, its date)."""
+    curated fallback and returns (tickers, live=True, fallback_date=None, status).
+    On failure it loads the fallback list and returns (tickers, False, its date,
+    status) where status is a short human-readable reason the live pull failed."""
     try:
         tickers = _scrape_russell2000()
         if len(tickers) > 1000:
             print(f"Got {len(tickers)} Russell 2000 holdings from iShares IWM")
             _save_fallback(tickers, today_str)
-            return tickers, True, None
+            return tickers, True, None, 'ok'
+        status = f'parsed only {len(tickers)} rows'
         print(f"iShares IWM returned only {len(tickers)} names — using fallback")
     except Exception as e:
-        print(f"iShares IWM download failed ({e}) — using fallback")
+        code = getattr(e, 'code', None)
+        status = f'HTTP {code}' if code else f'{type(e).__name__}'
+        print(f"iShares IWM download failed ({type(e).__name__}: {e}) — using fallback")
     tickers, date = _load_fallback()
     print(f"Using fallback list of {len(tickers)} names"
           + (f" (last refreshed {date})" if date else " (seed)"))
-    return tickers, False, date
+    return tickers, False, date, status
 
 
 def fetch_earnings(sym, today_str):
@@ -307,7 +311,7 @@ def main():
     print(f"=== Earnings Momentum Fetch | {today_str} | Lookback {LOOKBACK_YEARS}y ===\n")
 
     # ── Universe (Russell 2000; current members throughout) ──
-    russell, russell_live, fallback_date = get_russell2000(today_str)
+    russell, russell_live, fallback_date, russell_status = get_russell2000(today_str)
     tickers = sorted(set(russell))
     print(f"Universe: {len(tickers)} Russell 2000 tickers\n")
 
@@ -518,7 +522,7 @@ def main():
         russell_detail = 'Russell 2000 constituents (IWM)'
         russell_count = f'{len(tickers)} names'
     else:
-        russell_detail = ('Russell 2000 fallback · refreshed '
+        russell_detail = (f'Russell 2000 fallback ({russell_status}) · refreshed '
                           + (fallback_date or 'unknown'))
         russell_count = f'{len(tickers)} names'
     data_sources = [
