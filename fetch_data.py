@@ -7,10 +7,12 @@ to data.json.
 Methodology notes (see README / PR for rationale):
   * Universe: a hand-curated watchlist in tickers.txt (one symbol per line,
     '#' comments allowed). Edit that file to change which stocks are tracked.
-  * Every earnings event for a listed stock becomes a trade — there is no
-    ranking/selection filter. (Previously only top-decile SUE signals traded.)
+  * Each earnings event becomes a long trade only when its SUE clears a
+    positive threshold (MIN_SUE); negative/marginal-SUE events are skipped.
+    PEAD is directional, so trading non-positive surprises long just fights
+    the drift.
   * SUE is the EPS surprise scaled by the stock's price at the earnings date
-    (a unitless "surprise yield"), kept for display/diagnostics only.
+    (a unitless "surprise yield"), used both to gate entry and for display.
   * Returns are reported both raw and market-adjusted (abnormal = stock - SPY
     over the same holding window), with a t-stat on the abnormal returns.
 """
@@ -70,6 +72,11 @@ def _retry(fn, label, tries=3, base=1.5):
 LOOKBACK_YEARS = 5
 HOLD_DAYS = 60
 UPCOMING_DAYS = 30
+
+# Minimum SUE (EPS surprise as a % of share price) required to enter a long.
+# PEAD is directional — positive surprises drift up — so we only trade events
+# whose SUE clears this positive threshold and skip everything below it.
+MIN_SUE = 0.1
 
 BENCHMARK = "SPY"        # broad-market proxy for abnormal-return calculation
 
@@ -250,8 +257,9 @@ def main():
     if not bench_idx:
         print(f"WARNING: no {BENCHMARK} prices — abnormal returns unavailable")
 
-    # ── Build price-scaled SUE events (every earnings event, no ranking) ──
+    # ── Build price-scaled SUE events (long only on positive SUE) ──
     events = []
+    skipped_low_sue = 0
     for sym, hist in earnings_hist.items():
         idx = price_idx.get(sym)
         if not idx:
@@ -260,18 +268,25 @@ def main():
             px = _price_asof(idx, e['date'])
             if not px or px <= 0:
                 continue
+            # SUE as a "surprise yield": EPS surprise as a % of share price.
+            sue = round(e['surprise'] / px * 100, 4)
+            # PEAD is directional: only go long when the surprise clears a
+            # positive threshold. Skip negative/marginal-SUE events entirely.
+            if sue < MIN_SUE:
+                skipped_low_sue += 1
+                continue
             events.append({
                 'symbol': sym,
                 'date': e['date'],
                 'actual': e['actual'],
                 'estimate': e['estimate'],
                 'surprise': e['surprise'],
-                # SUE as a "surprise yield": EPS surprise as a % of share price.
-                'sue': round(e['surprise'] / px * 100, 4),
+                'sue': sue,
                 'quarter': quarter_of(e['date']),
             })
     events.sort(key=lambda x: x['date'])
-    print(f"\nEarnings signals (all events): {len(events)}")
+    print(f"\nEarnings signals (SUE >= {MIN_SUE}): {len(events)} "
+          f"({skipped_low_sue} skipped below threshold)")
 
     if not events:
         preserve_last_known_good(today_str, updated_at, upcoming_earnings)
@@ -404,7 +419,7 @@ def main():
             'universe': 'Custom watchlist',
             'benchmark': BENCHMARK,
             'sue': 'EPS surprise / price at earnings (%)',
-            'selection': 'all earnings events (no ranking)',
+            'selection': f'long on SUE >= {MIN_SUE}',
         },
         'tradeStats': trade_stats,
         'dataSources': data_sources,
