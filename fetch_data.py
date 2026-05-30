@@ -39,7 +39,13 @@ except Exception as _e:  # curl_cffi missing or failed to init
 
 
 def _ticker(sym):
-    return yf.Ticker(sym, session=_SESSION) if _SESSION else yf.Ticker(sym)
+    # Defensive: some yfinance versions don't accept a custom session arg.
+    if _SESSION is not None:
+        try:
+            return yf.Ticker(sym, session=_SESSION)
+        except TypeError:
+            pass
+    return yf.Ticker(sym)
 
 
 def _retry(fn, label, tries=3, base=1.5):
