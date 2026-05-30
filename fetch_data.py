@@ -73,6 +73,12 @@ LOOKBACK_YEARS = 5
 HOLD_DAYS = 60
 UPCOMING_DAYS = 30
 
+# How far back to look for *new* earnings events each run. We don't re-scan all
+# of history — only events newer than this (and not already in the log) are
+# treated as candidates for a new trade. A quarter-plus of slack means a few
+# missed runs (or a paused cron) won't drop a freshly reported quarter.
+NEW_EVENT_LOOKBACK_DAYS = 120
+
 # Minimum SUE (EPS surprise as a % of share price) required to enter a long.
 # PEAD is directional — positive surprises drift up — so we only trade events
 # whose SUE clears this positive threshold and skip everything below it.
@@ -80,11 +86,12 @@ MIN_SUE = 0.1
 
 BENCHMARK = "SPY"        # broad-market proxy for abnormal-return calculation
 
-# Persistent, ever-growing log of CLOSED trades. Each scan only simulates the
-# trailing LOOKBACK_YEARS window, but closed trades are immutable historical
-# facts, so we accumulate them here keyed by (symbol, earningsDate) and keep
-# them forever. The dashboard then shows the full log (all history we've ever
-# recorded) plus the current open trades, instead of just the last 5 years.
+# Persistent, ever-growing log of every trade we've ever opened, keyed by
+# (symbol, earningsDate). Each run only scans for NEW earnings events and
+# refreshes the trades still open; closed trades are immutable and are kept
+# forever without being re-fetched or re-simulated. The dashboard renders the
+# whole log, so history accumulates continuously instead of being rebuilt from
+# a trailing window each run.
 TRADE_LOG_FILE = "trades_log.json"
 
 # Curated, user-editable watchlist. The dashboard's "Watchlist" chip links here.
@@ -198,21 +205,27 @@ def main():
     today = now.date()
     today_str = str(today)
     updated_at = now.strftime('%Y-%m-%d %H:%M:%S ET')
-    cutoff = today - datetime.timedelta(days=LOOKBACK_YEARS * 365)
-    cutoff_str = str(cutoff)
     upcoming_cutoff = str(today + datetime.timedelta(days=UPCOMING_DAYS))
 
-    print(f"=== Earnings Momentum Fetch | {today_str} | Lookback {LOOKBACK_YEARS}y ===\n")
+    print(f"=== Earnings Momentum Fetch | {today_str} | incremental (new events only) ===\n")
 
     # ── Universe (curated watchlist) ──
     tickers = load_tickers()
     print(f"Universe: {len(tickers)} watchlist tickers\n")
 
-    # ── Fetch earnings ──
-    earnings_hist = {}
+    # ── Load the persistent log (every trade we've ever opened) ──
+    log = load_trade_log()
+    open_trades = [t for t in log.values() if t.get('open')]
+    print(f"Trade log: {len(log)} trades on file ({len(open_trades)} still open).\n")
+
+    # ── Scan earnings metadata for the whole watchlist (cheap, no prices) ──
+    # Used only to surface upcoming earnings, drive next-earnings exits, and spot
+    # NEW events — recent earnings we haven't already logged a trade for.
+    new_event_floor = str(today - datetime.timedelta(days=NEW_EVENT_LOOKBACK_DAYS))
     upcoming_earnings = []
     today_earnings = []
     earn_dates = {}
+    new_candidates = []
     for i, sym in enumerate(tickers):
         print(f"  [{i+1}/{len(tickers)}] {sym}...", end=" ", flush=True)
         res = fetch_earnings(sym, today_str)
@@ -233,161 +246,90 @@ def main():
         if all_dates:
             earn_dates[sym] = all_dates
 
-        filtered = [e for e in raw if e['date'] >= cutoff_str]
-        if filtered:
-            earnings_hist[sym] = filtered
-            print(f"{len(filtered)} events")
-        else:
-            print("no data")
+        # New events = recent earnings not already represented by a logged trade.
+        fresh = [e for e in raw
+                 if e['date'] >= new_event_floor and (sym, e['date']) not in log]
+        new_candidates.extend({'symbol': sym, **e} for e in fresh)
+        print(f"{len(fresh)} new" if fresh else "—")
         if (i + 1) % 10 == 0:
             time.sleep(0.5)
 
     upcoming_earnings.sort(key=lambda x: (x['date'], x['symbol']))
 
-    # ── Fetch prices (full universe + benchmark) ──
-    price_syms = sorted(set(earnings_hist) | {BENCHMARK})
-    print(f"\nFetching prices for {len(price_syms)} symbols (incl. {BENCHMARK})...")
-    prices, price_idx = {}, {}
-    for i, sym in enumerate(price_syms):
-        print(f"  [{i+1}/{len(price_syms)}] {sym}...", end=" ", flush=True)
-        p = fetch_prices(sym, cutoff_str)
-        if p:
-            prices[sym] = p
-            price_idx[sym] = _build_index(p)
-            print(f"{len(p)} bars")
-        else:
-            print("no prices")
-        if (i + 1) % 10 == 0:
-            time.sleep(0.5)
+    # ── Fetch prices only for what we must (re)simulate ──
+    # That's the trades still open (to refresh / finalize them) plus any new
+    # events. Closed trades already in the log are immutable and never re-priced.
+    today_dt = datetime.datetime.strptime(today_str, '%Y-%m-%d')
+    need_syms = {t['symbol'] for t in open_trades} | {e['symbol'] for e in new_candidates}
+    date_floor = [t['entryDate'] for t in open_trades] + [e['date'] for e in new_candidates]
 
-    bench_idx = price_idx.get(BENCHMARK)
-    if not bench_idx:
-        print(f"WARNING: no {BENCHMARK} prices — abnormal returns unavailable")
+    prices, price_idx, bench_idx = {}, {}, None
+    if need_syms:
+        # Start a week before the earliest thing we need so as-of lookups
+        # (entry price, price-at-earnings for SUE) land on a real bar.
+        start_dt = datetime.datetime.strptime(min(date_floor), '%Y-%m-%d') - datetime.timedelta(days=7)
+        price_start = start_dt.strftime('%Y-%m-%d')
+        price_syms = sorted(need_syms | {BENCHMARK})
+        print(f"\nFetching prices for {len(price_syms)} symbols (incl. {BENCHMARK}) "
+              f"from {price_start} — {len(open_trades)} open + {len(new_candidates)} new...")
+        for i, sym in enumerate(price_syms):
+            print(f"  [{i+1}/{len(price_syms)}] {sym}...", end=" ", flush=True)
+            p = fetch_prices(sym, price_start)
+            if p:
+                prices[sym] = p
+                price_idx[sym] = _build_index(p)
+                print(f"{len(p)} bars")
+            else:
+                print("no prices")
+            if (i + 1) % 10 == 0:
+                time.sleep(0.5)
+        bench_idx = price_idx.get(BENCHMARK)
+        if not bench_idx:
+            print(f"WARNING: no {BENCHMARK} prices — abnormal returns unavailable")
+    else:
+        print("\nNo open trades and no new events — log already current.")
 
-    # ── Build price-scaled SUE events (long only on positive SUE) ──
-    events = []
+    # ── Build the events to (re)simulate ──
+    # New events become trades only if their SUE clears the threshold; open
+    # trades are re-simulated to refresh their value and finalize them on close.
+    sim_events = []
     skipped_low_sue = 0
-    for sym, hist in earnings_hist.items():
-        idx = price_idx.get(sym)
+    for e in new_candidates:
+        idx = price_idx.get(e['symbol'])
         if not idx:
             continue
-        for e in hist:
-            px = _price_asof(idx, e['date'])
-            if not px or px <= 0:
-                continue
-            # SUE as a "surprise yield": EPS surprise as a % of share price.
-            sue = round(e['surprise'] / px * 100, 4)
-            # PEAD is directional: only go long when the surprise clears a
-            # positive threshold. Skip negative/marginal-SUE events entirely.
-            if sue < MIN_SUE:
-                skipped_low_sue += 1
-                continue
-            events.append({
-                'symbol': sym,
-                'date': e['date'],
-                'actual': e['actual'],
-                'estimate': e['estimate'],
-                'surprise': e['surprise'],
-                'sue': sue,
-                'quarter': quarter_of(e['date']),
-            })
-    events.sort(key=lambda x: x['date'])
-    print(f"\nEarnings signals (SUE >= {MIN_SUE}): {len(events)} "
-          f"({skipped_low_sue} skipped below threshold)")
+        px_at = _price_asof(idx, e['date'])
+        if not px_at or px_at <= 0:
+            continue
+        # SUE as a "surprise yield": EPS surprise as a % of share price.
+        sue = round(e['surprise'] / px_at * 100, 4)
+        # PEAD is directional: only go long on positive surprises above threshold.
+        if sue < MIN_SUE:
+            skipped_low_sue += 1
+            continue
+        sim_events.append({'symbol': e['symbol'], 'date': e['date'], 'sue': sue})
+    for t in open_trades:
+        sim_events.append({'symbol': t['symbol'], 'date': t['earningsDate'], 'sue': t['sue']})
 
-    if not events:
+    # ── Simulate and upsert into the log ──
+    new_trades = updated = 0
+    for ev in sim_events:
+        trade = simulate_trade(ev, prices, earn_dates, bench_idx, today_str, today_dt)
+        if trade is None:
+            continue  # can't price it this run — leave any existing record intact
+        key = (ev['symbol'], ev['date'])
+        if key in log:
+            updated += 1
+        else:
+            new_trades += 1
+        log[key] = trade
+    trades = save_trade_log(log)
+    print(f"\nSimulated {len(sim_events)} events: +{new_trades} new, {updated} refreshed, "
+          f"{skipped_low_sue} below SUE {MIN_SUE}. Log now holds {len(trades)} trades.")
+
+    if not trades:
         preserve_last_known_good(today_str, updated_at, upcoming_earnings)
         return
-
-    # ── Simulate trades (one per earnings event) ──
-    print("Simulating trades...")
-    trades = []
-    today_dt = datetime.datetime.strptime(today_str, '%Y-%m-%d')
-    for ev in events:
-        sym = ev['symbol']
-        px = prices.get(sym, [])
-        if not px:
-            continue
-
-        # Entry: first trading day after earnings.
-        entry = next((p for p in px if p['date'] > ev['date']), None)
-        if not entry:
-            continue
-
-        entry_dt = datetime.datetime.strptime(entry['date'], '%Y-%m-%d')
-        target_exit_dt = entry_dt + datetime.timedelta(days=HOLD_DAYS)
-        exit_reason = 'hold_period'
-
-        # Exit early if the next earnings event lands inside the hold window.
-        nxt = next((d for d in earn_dates.get(sym, []) if d > ev['date']), None)
-        if nxt:
-            nxt_dt = datetime.datetime.strptime(nxt, '%Y-%m-%d') - datetime.timedelta(days=1)
-            if nxt_dt < target_exit_dt:
-                target_exit_dt = nxt_dt
-                exit_reason = 'next_earnings'
-        target_exit_str = target_exit_dt.strftime('%Y-%m-%d')
-
-        bench_entry = _price_asof(bench_idx, entry['date']) if bench_idx else None
-
-        if target_exit_dt > today_dt:
-            # Open trade.
-            cur = next((p for p in reversed(px) if p['date'] <= today_str), None)
-            ret = round(((cur['close'] / entry['close']) - 1) * 100, 2) if cur else None
-            path = [round((p['close'] / entry['close'] - 1) * 100, 2)
-                    for p in px if entry['date'] <= p['date'] <= today_str]
-            bench_ret, abn_ret = _bench_abn(bench_idx, bench_entry,
-                                            cur['date'] if cur else None, ret)
-            trades.append({
-                'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
-                'entryDate': entry['date'], 'entryPrice': entry['close'],
-                'exitDate': None, 'exitPrice': None,
-                'currentPrice': cur['close'] if cur else None,
-                'returnPct': ret, 'benchReturnPct': bench_ret, 'abnReturnPct': abn_ret,
-                'path': path,
-                'daysHeld': (today_dt - entry_dt).days,
-                'maxDays': (target_exit_dt - entry_dt).days,
-                'exitReason': None, 'open': True
-            })
-        else:
-            # Closed trade.
-            exit_bar = next((p for p in reversed(px) if p['date'] <= target_exit_str), None)
-            if not exit_bar:
-                continue
-            ret = round(((exit_bar['close'] / entry['close']) - 1) * 100, 2)
-            path = [round((p['close'] / entry['close'] - 1) * 100, 2)
-                    for p in px if entry['date'] <= p['date'] <= exit_bar['date']]
-            bench_ret, abn_ret = _bench_abn(bench_idx, bench_entry, exit_bar['date'], ret)
-            trades.append({
-                'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
-                'entryDate': entry['date'], 'entryPrice': entry['close'],
-                'exitDate': exit_bar['date'], 'exitPrice': exit_bar['close'],
-                'currentPrice': None,
-                'returnPct': ret, 'benchReturnPct': bench_ret, 'abnReturnPct': abn_ret,
-                'path': path,
-                'daysHeld': (datetime.datetime.strptime(exit_bar['date'], '%Y-%m-%d') - entry_dt).days,
-                'maxDays': HOLD_DAYS, 'exitReason': exit_reason, 'open': False
-            })
-
-    # ── Merge this scan's closed trades into the persistent log ──
-    # Closed trades are immutable facts: record each once (upserting refreshes
-    # any still inside the scan window) and keep them forever. We then display
-    # the full log of closed trades plus the live open trades, so the dashboard
-    # accumulates all history rather than only the trailing LOOKBACK_YEARS.
-    trade_log = load_trade_log()
-    new_closed = 0
-    for t in trades:
-        if not t['open']:
-            key = (t['symbol'], t['earningsDate'])
-            if key not in trade_log:
-                new_closed += 1
-            trade_log[key] = t
-    logged_closed = save_trade_log(trade_log)
-    open_now = [t for t in trades if t['open']]
-    print(f"Trade log: {len(logged_closed)} closed trades total "
-          f"({new_closed} new this scan), {len(open_now)} open.")
-
-    # Full display universe: every closed trade ever recorded + live open trades.
-    trades = logged_closed + open_now
 
     open_t = [t for t in trades if t['open']]
     closed_t = [t for t in trades if not t['open']]
@@ -428,12 +370,14 @@ def main():
     }
 
     # ── Live data-source status (shown in the dashboard header) ──
-    n_priced = len([s for s in prices if s != BENCHMARK])
+    # On an incremental run we only price open trades + new events, so base the
+    # "live" flag on the earnings scan (which covers the whole watchlist).
+    yahoo_live = bool(earn_dates) or bool(prices)
     data_sources = [
         {'name': 'Yahoo Finance', 'detail': 'earnings & prices',
-         'live': bool(prices), 'count': f'{n_priced}/{len(tickers)} tickers'},
+         'live': yahoo_live, 'count': f'{len(earn_dates)}/{len(tickers)} tickers'},
         {'name': f'Yahoo Finance · {BENCHMARK}', 'detail': 'benchmark',
-         'live': bool(bench_idx), 'count': None},
+         'live': bool(bench_idx) or not need_syms, 'count': None},
         {'name': 'Watchlist', 'detail': 'edit on GitHub',
          'live': True, 'count': f'{len(tickers)} tickers', 'url': WATCHLIST_URL},
     ]
@@ -455,9 +399,90 @@ def main():
         'today': today_activity,
         'trades': trades
     }
+    # If we needed live prices (open trades / new events) but got none, Yahoo is
+    # likely rate-limiting this run — flag the open trades as possibly stale
+    # rather than silently showing last run's prices as current.
+    if need_syms and not prices:
+        output['stale'] = True
+        output['dataWarning'] = (
+            "Live price refresh returned no data (Yahoo Finance is likely "
+            "rate-limiting this run); open-trade values may be stale."
+        )
     with open('data.json', 'w') as f:
         json.dump(output, f)
     print(f"\nWrote data.json ({len(json.dumps(output))} bytes). Done.")
+
+
+def simulate_trade(ev, prices, earn_dates, bench_idx, today_str, today_dt):
+    """Simulate one PEAD trade for earnings event `ev` (needs 'symbol','date','sue').
+
+    Entry is the first trading day after earnings; the position is held for
+    HOLD_DAYS or until the next earnings date, whichever comes first. Returns a
+    trade dict (open or closed) or None if it can't be priced yet (no price
+    series, no entry bar, or no exit bar)."""
+    sym = ev['symbol']
+    px = prices.get(sym, [])
+    if not px:
+        return None
+
+    # Entry: first trading day after earnings.
+    entry = next((p for p in px if p['date'] > ev['date']), None)
+    if not entry:
+        return None
+
+    entry_dt = datetime.datetime.strptime(entry['date'], '%Y-%m-%d')
+    target_exit_dt = entry_dt + datetime.timedelta(days=HOLD_DAYS)
+    exit_reason = 'hold_period'
+
+    # Exit early if the next earnings event lands inside the hold window.
+    nxt = next((d for d in earn_dates.get(sym, []) if d > ev['date']), None)
+    if nxt:
+        nxt_dt = datetime.datetime.strptime(nxt, '%Y-%m-%d') - datetime.timedelta(days=1)
+        if nxt_dt < target_exit_dt:
+            target_exit_dt = nxt_dt
+            exit_reason = 'next_earnings'
+    target_exit_str = target_exit_dt.strftime('%Y-%m-%d')
+
+    bench_entry = _price_asof(bench_idx, entry['date']) if bench_idx else None
+
+    if target_exit_dt > today_dt:
+        # Open trade.
+        cur = next((p for p in reversed(px) if p['date'] <= today_str), None)
+        ret = round(((cur['close'] / entry['close']) - 1) * 100, 2) if cur else None
+        path = [round((p['close'] / entry['close'] - 1) * 100, 2)
+                for p in px if entry['date'] <= p['date'] <= today_str]
+        bench_ret, abn_ret = _bench_abn(bench_idx, bench_entry,
+                                        cur['date'] if cur else None, ret)
+        return {
+            'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
+            'entryDate': entry['date'], 'entryPrice': entry['close'],
+            'exitDate': None, 'exitPrice': None,
+            'currentPrice': cur['close'] if cur else None,
+            'returnPct': ret, 'benchReturnPct': bench_ret, 'abnReturnPct': abn_ret,
+            'path': path,
+            'daysHeld': (today_dt - entry_dt).days,
+            'maxDays': (target_exit_dt - entry_dt).days,
+            'exitReason': None, 'open': True,
+        }
+
+    # Closed trade.
+    exit_bar = next((p for p in reversed(px) if p['date'] <= target_exit_str), None)
+    if not exit_bar:
+        return None
+    ret = round(((exit_bar['close'] / entry['close']) - 1) * 100, 2)
+    path = [round((p['close'] / entry['close'] - 1) * 100, 2)
+            for p in px if entry['date'] <= p['date'] <= exit_bar['date']]
+    bench_ret, abn_ret = _bench_abn(bench_idx, bench_entry, exit_bar['date'], ret)
+    return {
+        'symbol': sym, 'sue': ev['sue'], 'earningsDate': ev['date'],
+        'entryDate': entry['date'], 'entryPrice': entry['close'],
+        'exitDate': exit_bar['date'], 'exitPrice': exit_bar['close'],
+        'currentPrice': None,
+        'returnPct': ret, 'benchReturnPct': bench_ret, 'abnReturnPct': abn_ret,
+        'path': path,
+        'daysHeld': (datetime.datetime.strptime(exit_bar['date'], '%Y-%m-%d') - entry_dt).days,
+        'maxDays': HOLD_DAYS, 'exitReason': exit_reason, 'open': False,
+    }
 
 
 def _bench_abn(bench_idx, bench_entry, exit_date, ret):
@@ -507,7 +532,8 @@ def preserve_last_known_good(today_str, updated_at, upcoming_earnings):
 
 
 def load_trade_log():
-    """Load the persistent closed-trade log as a dict keyed by (symbol, earningsDate).
+    """Load the persistent trade log (every trade ever recorded, open or closed)
+    as a dict keyed by (symbol, earningsDate).
 
     Returns {} if the log doesn't exist yet (first run) or is unreadable."""
     try:
@@ -515,12 +541,12 @@ def load_trade_log():
             recs = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
-    return {(t['symbol'], t['earningsDate']): t for t in recs if not t.get('open')}
+    return {(t['symbol'], t['earningsDate']): t for t in recs}
 
 
 def save_trade_log(log):
-    """Persist the closed-trade log (sorted by earnings date) and return the
-    sorted list of records."""
+    """Persist the trade log (sorted by earnings date) and return the sorted
+    list of records."""
     recs = sorted(log.values(), key=lambda t: (t['earningsDate'], t['symbol']))
     with open(TRADE_LOG_FILE, 'w') as f:
         json.dump(recs, f)
