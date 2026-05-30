@@ -1,0 +1,17 @@
+# Watchlist — one ticker per line. Lines starting with # are ignored.
+# Edit this file to change which stocks the dashboard tracks.
+# Commas or spaces also work as separators.
+NVDA
+MSFT
+GOOG
+META
+AMZN
+SPOT
+NFLX
+AXP
+V
+MA
+COST
+MCD
+KO
+MNST

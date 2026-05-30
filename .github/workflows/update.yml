@@ -2,8 +2,8 @@ name: Update Earnings Data
 
 on:
   schedule:
-    # Run every 6 hours
-    - cron: '0 */6 * * *'
+    # Run every 2 hours
+    - cron: '0 */2 * * *'
   workflow_dispatch: # Manual trigger
 
 permissions:
@@ -23,7 +23,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install yfinance pandas lxml html5lib tzdata
+        run: pip install yfinance pandas tzdata
 
       - name: Fetch earnings data
         run: python fetch_data.py
@@ -32,6 +32,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data.json russell2000_fallback.json
+          git add data.json
           git diff --cached --quiet || git commit -m "Update earnings data $(date -u +%Y-%m-%d)"
           git push

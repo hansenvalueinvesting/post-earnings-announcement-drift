@@ -88,6 +88,9 @@
   .src .dot.down { background: #d98a00; box-shadow: 0 0 0 2px rgba(217,138,0,.18); }
   .src .src-name { color: var(--text); }
   .src .src-meta { color: var(--text-dim); }
+  a.src.src-link { text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s; }
+  a.src.src-link:hover { border-color: var(--accent, #4a90d9); background: rgba(74,144,217,.08); }
+  .src .src-ext { color: var(--text-dim); font-size: 11px; margin-left: 1px; }
   header .updated {
     text-align: right;
     font-size: 12px;
@@ -462,11 +465,16 @@ function renderDataSources(sources) {
   const esc = t => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
   const chips = sources.map(s => {
     const cls = s.live ? 'up' : 'down';
-    const title = s.live ? 'live' : 'fallback / unavailable';
     const detail = s.detail ? `<span class="src-meta">${esc(s.detail)}</span>` : '';
     const count = s.count ? `<span class="src-meta">· ${esc(s.count)}</span>` : '';
-    return `<span class="src" title="${title}"><span class="dot ${cls}"></span>` +
-           `<span class="src-name">${esc(s.name)}</span>${detail}${count}</span>`;
+    const inner = `<span class="dot ${cls}"></span>` +
+                  `<span class="src-name">${esc(s.name)}</span>${detail}${count}`;
+    if (s.url) {
+      return `<a class="src src-link" href="${esc(s.url)}" target="_blank" rel="noopener" ` +
+             `title="open ${esc(s.name)} on GitHub">${inner}<span class="src-ext">↗</span></a>`;
+    }
+    const title = s.live ? 'live' : 'fallback / unavailable';
+    return `<span class="src" title="${title}">${inner}</span>`;
   }).join('');
   el.innerHTML = `<span class="src-label">live data sources</span>${chips}`;
 }
@@ -475,7 +483,7 @@ function renderStats(data) {
   const s = data.tradeStats;
   if (!s) return;
 
-  const bench = (data.config && data.config.benchmark) || 'IWM';
+  const bench = (data.config && data.config.benchmark) || 'SPY';
 
   setStat('sTrades', s.total);
   document.getElementById('sOpenClosed').textContent = `${s.open} open · ${s.closed} closed`;
