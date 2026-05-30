@@ -23,7 +23,9 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install yfinance pandas tzdata
+        # lxml + html5lib are required by yfinance's get_earnings_dates()
+        # (it parses the earnings page with pandas.read_html).
+        run: pip install yfinance pandas lxml html5lib tzdata
 
       - name: Fetch earnings data
         run: python fetch_data.py

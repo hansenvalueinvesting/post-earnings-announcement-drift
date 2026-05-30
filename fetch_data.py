@@ -230,12 +230,9 @@ def main():
     events.sort(key=lambda x: x['date'])
     print(f"\nEarnings signals (all events): {len(events)}")
 
-    if not events:
-        with open('data.json', 'w') as f:
-            json.dump({'trades': [], 'updated': today_str, 'updatedAt': updated_at,
-                       'upcomingEarnings': upcoming_earnings, 'error': 'No data'}, f)
-        print("No data. Wrote empty data.json.")
-        return
+    # Note: an empty `events` list is not fatal — we still write a full payload
+    # (zeroed stats + data-source chips) so the dashboard renders cleanly and
+    # shows that no trades are available yet, rather than a bare error stub.
 
     # ── Simulate trades (one per earnings event) ──
     print("Simulating trades...")

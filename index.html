@@ -88,6 +88,12 @@
   .src .dot.down { background: #d98a00; box-shadow: 0 0 0 2px rgba(217,138,0,.18); }
   .src .src-name { color: var(--text); }
   .src .src-meta { color: var(--text-dim); }
+  .empty-notice {
+    margin: 16px 0 0; padding: 12px 16px; border-radius: 8px;
+    border: 1px solid var(--border, #2a2e37);
+    background: rgba(217,138,0,.08); color: var(--text-soft);
+    font-size: 13px;
+  }
   a.src.src-link { text-decoration: none; cursor: pointer; transition: border-color .15s, background .15s; }
   a.src.src-link:hover { border-color: var(--accent, #4a90d9); background: rgba(74,144,217,.08); }
   .src .src-ext { color: var(--text-dim); font-size: 11px; margin-left: 1px; }
@@ -415,35 +421,56 @@ const C = {
 };
 
 async function init() {
+  let data;
   try {
     const resp = await fetch('data.json');
     if (!resp.ok) throw new Error('data.json not found');
-    const data = await resp.json();
-
-    if (data.error) { console.error(data.error); return; }
-
-    document.getElementById('updated').textContent = data.updatedAt || data.updated;
-    const trades = data.trades || [];
-    const open = trades.filter(t => t.open);
-    const closed = trades.filter(t => !t.open);
-    const rets = closed.map(t => t.returnPct).filter(r => r != null);
-    if (data.tradeStats && data.tradeStats.avgReturn == null && rets.length)
-      data.tradeStats.avgReturn = +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2);
-
-    renderDataSources(data.dataSources);
-    renderStats(data);
-    renderToday(data.today, data.updatedAt || data.updated);
-    renderUpcoming(data.upcomingEarnings || []);
-    renderOpen(open);
-    renderClosed(closed);
-    scatterTrades = trades;
-    renderScatter(trades, scatterMode);
-    renderDist(rets);
-    renderQuarterly(closed);
-    renderWinLoss(closed);
+    data = await resp.json();
   } catch (e) {
     console.error('Failed to load:', e.message);
+    const el = document.getElementById('dataSources');
+    if (el) el.textContent = 'could not load data.json — the next refresh will retry';
+    return;
   }
+
+  // Render the page chrome first so a sparse/empty payload still loads the UI
+  // (header, data sources, zeroed stats) instead of leaving a blank page.
+  document.getElementById('updated').textContent = data.updatedAt || data.updated || '—';
+  renderDataSources(data.dataSources);
+
+  const trades = data.trades || [];
+  const open = trades.filter(t => t.open);
+  const closed = trades.filter(t => !t.open);
+  const rets = closed.map(t => t.returnPct).filter(r => r != null);
+  if (data.tradeStats && data.tradeStats.avgReturn == null && rets.length)
+    data.tradeStats.avgReturn = +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2);
+
+  renderEmptyNotice(!trades.length ? (data.note || data.error) : null);
+
+  if (data.tradeStats) renderStats(data);
+  renderToday(data.today, data.updatedAt || data.updated);
+  renderUpcoming(data.upcomingEarnings || []);
+  renderOpen(open);
+  renderClosed(closed);
+  scatterTrades = trades;
+  renderScatter(trades, scatterMode);
+  renderDist(rets);
+  renderQuarterly(closed);
+  renderWinLoss(closed);
+}
+
+function renderEmptyNotice(msg) {
+  let el = document.getElementById('emptyNotice');
+  if (!msg) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'emptyNotice';
+    el.className = 'empty-notice';
+    const stats = document.querySelector('.stats');
+    stats ? stats.parentNode.insertBefore(el, stats) : document.body.prepend(el);
+  }
+  el.textContent = 'No trades to show yet — data will populate on the next refresh.'
+    + (msg && msg !== 'No data' ? ` (${msg})` : '');
 }
 
 const pct = (v, dp = 2, sign = false) => (sign && v > 0 ? '+' : '') + v.toFixed(dp) + '%';
