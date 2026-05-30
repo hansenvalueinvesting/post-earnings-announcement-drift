@@ -297,6 +297,21 @@
     font-family: 'Inter', sans-serif;
   }
 
+  /* ── NOTICE BANNER ── */
+  .notice {
+    display: none;
+    margin-top: 24px;
+    padding: 14px 18px;
+    background: var(--amber-soft);
+    border: 1px solid #f0d9a8;
+    border-radius: 10px;
+    font-size: 13px;
+    color: #8a5a00;
+    line-height: 1.5;
+  }
+  .notice.show { display: block; }
+  .notice strong { font-weight: 600; }
+
   footer {
     text-align: center;
     padding: 32px 0 48px;
@@ -324,6 +339,8 @@
       <span class="stamp" id="updated">—</span>
     </div>
   </header>
+
+  <div class="notice" id="notice"></div>
 
   <div class="stats">
     <div class="stat"><div class="label">Total Trades</div><div class="val mono" id="sTrades">—</div><div class="bh mono" id="sOpenClosed"></div><div class="bh mono" id="sAvgReturn"></div></div>
@@ -414,22 +431,45 @@ const C = {
   font: 'IBM Plex Mono'
 };
 
+function showNotice(html) {
+  const el = document.getElementById('notice');
+  if (!el) return;
+  el.innerHTML = html;
+  el.classList.add('show');
+}
+
 async function init() {
+  let data;
   try {
     const resp = await fetch('data.json');
-    if (!resp.ok) throw new Error('data.json not found');
-    const data = await resp.json();
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' loading data.json');
+    data = await resp.json();
+  } catch (e) {
+    console.error('Failed to load data.json:', e.message);
+    // Render the page anyway (empty states) and explain what happened.
+    data = { trades: [], upcomingEarnings: [],
+             error: 'Could not load data.json (' + e.message + ').' };
+  }
 
-    if (data.error) { console.error(data.error); return; }
+  // A populated `error` field (or a failed fetch) no longer blanks the page:
+  // we surface a notice and still render every section's empty state.
+  if (data.error) {
+    console.warn('data.json reported an error:', data.error);
+    showNotice('<strong>Live data is temporarily unavailable.</strong> ' +
+      'The latest data refresh did not return any trades, so the dashboard ' +
+      'is showing empty states. This usually resolves on the next scheduled ' +
+      'update. <span class="mono">(' + String(data.error) + ')</span>');
+  }
 
-    document.getElementById('updated').textContent = data.updatedAt || data.updated;
-    const trades = data.trades || [];
-    const open = trades.filter(t => t.open);
-    const closed = trades.filter(t => !t.open);
-    const rets = closed.map(t => t.returnPct).filter(r => r != null);
-    if (data.tradeStats && data.tradeStats.avgReturn == null && rets.length)
-      data.tradeStats.avgReturn = +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2);
+  document.getElementById('updated').textContent = data.updatedAt || data.updated || '—';
+  const trades = Array.isArray(data.trades) ? data.trades : [];
+  const open = trades.filter(t => t.open);
+  const closed = trades.filter(t => !t.open);
+  const rets = closed.map(t => t.returnPct).filter(r => r != null);
+  if (data.tradeStats && data.tradeStats.avgReturn == null && rets.length)
+    data.tradeStats.avgReturn = +(rets.reduce((a, b) => a + b, 0) / rets.length).toFixed(2);
 
+  try {
     renderDataSources(data.dataSources);
     renderStats(data);
     renderToday(data.today, data.updatedAt || data.updated);
@@ -442,7 +482,9 @@ async function init() {
     renderQuarterly(closed);
     renderWinLoss(closed);
   } catch (e) {
-    console.error('Failed to load:', e.message);
+    console.error('Failed to render dashboard:', e.message);
+    showNotice('<strong>Something went wrong rendering the dashboard.</strong> ' +
+      'Please try reloading. <span class="mono">(' + String(e.message) + ')</span>');
   }
 }
 
