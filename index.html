@@ -669,19 +669,24 @@ function renderScatter(trades, mode) {
   const bySue = mode === 'sue';
   const closedPts = trades
     .filter(t => !t.open && t.returnPct != null)
-    .map(t => ({ x: bySue ? t.sue : t.entryDate, y: t.returnPct, symbol: t.symbol, sue: t.sue, date: t.entryDate }));
+    .map(t => ({ x: bySue ? t.returnPct : t.entryDate, y: bySue ? t.sue : t.returnPct, symbol: t.symbol, sue: t.sue, ret: t.returnPct, date: t.entryDate }));
   const openPts = trades
     .filter(t => t.open && t.returnPct != null)
-    .map(t => ({ x: bySue ? t.sue : t.entryDate, y: t.returnPct, symbol: t.symbol, sue: t.sue, date: t.entryDate }));
+    .map(t => ({ x: bySue ? t.returnPct : t.entryDate, y: bySue ? t.sue : t.returnPct, symbol: t.symbol, sue: t.sue, ret: t.returnPct, date: t.entryDate }));
 
   const ctx = document.getElementById('scatterChart').getContext('2d');
   if (scatterChartInst) scatterChartInst.destroy();
 
+  const retTicks = { color: C.tick, font: { family: C.font, size: 10 }, callback: v => v + '%' };
   const xScale = bySue
-    ? { type: 'linear', title: { display: true, text: 'SUE Score', color: C.tick, font: { family: C.font, size: 10 } },
-        ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { color: C.grid } }
+    ? { type: 'linear', title: { display: true, text: 'Return %', color: C.tick, font: { family: C.font, size: 10 } },
+        ticks: retTicks, grid: { color: C.grid } }
     : { type: 'time', time: { unit: 'month', tooltipFormat: 'yyyy-MM-dd', displayFormats: { month: 'MMM yy' } },
         ticks: { color: C.tick, font: { family: C.font, size: 10 }, maxTicksLimit: 10, maxRotation: 0 }, grid: { color: C.grid } };
+  const yScale = bySue
+    ? { title: { display: true, text: 'SUE Score', color: C.tick, font: { family: C.font, size: 10 } },
+        ticks: { color: C.tick, font: { family: C.font, size: 10 } }, grid: { color: C.grid } }
+    : { ticks: retTicks, grid: { color: C.grid } };
 
   scatterChartInst = new Chart(ctx, {
     type: 'scatter',
@@ -703,7 +708,7 @@ function renderScatter(trades, mode) {
           callbacks: {
             title: items => items[0]?.raw?.symbol || '',
             label: c => {
-              const v = c.parsed.y;
+              const v = c.raw.ret;
               const detail = bySue ? `SUE ${c.raw.sue?.toFixed(2)}  ` : `${c.raw.date}  `;
               return `${detail}${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
             }
@@ -713,7 +718,7 @@ function renderScatter(trades, mode) {
       interaction: { mode: 'nearest', intersect: true },
       scales: {
         x: xScale,
-        y: { ticks: { color: C.tick, font: { family: C.font, size: 10 }, callback: v => v + '%' }, grid: { color: C.grid } }
+        y: yScale
       }
     }
   });
