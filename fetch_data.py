@@ -1,34 +1,25 @@
 #!/usr/bin/env python3
 """
-Fetch Russell 2000 earnings surprise data + historical prices via yfinance.
-Simulates a PEAD strategy and outputs per-trade data + summary stats to data.json.
+Fetch earnings surprise data + historical prices for a curated watchlist via
+yfinance. Simulates a PEAD strategy and outputs per-trade data + summary stats
+to data.json.
 
 Methodology notes (see README / PR for rationale):
-  * Universe: the Russell 2000 small-cap index. Constituents are pulled live from
-    the iShares IWM ETF holdings file. Every successful pull refreshes a curated
-    fallback list (russell2000_fallback.json) so an offline run can still produce
-    data; the dashboard shows when that fallback was last refreshed.
-  * Membership is treated as "current members throughout": today's Russell 2000
-    list is assumed to be members across the whole lookback window. The index
-    only reconstitutes annually (June) and has no clean point-in-time / "changes"
-    feed, so unlike a survivorship-corrected approach this carries some
-    survivorship bias. (This mirrors how NASDAQ-100 names were handled before.)
+  * Universe: a hand-curated watchlist in tickers.txt (one symbol per line,
+    '#' comments allowed). Edit that file to change which stocks are tracked.
+  * Every earnings event for a listed stock becomes a trade — there is no
+    ranking/selection filter. (Previously only top-decile SUE signals traded.)
   * SUE is the EPS surprise scaled by the stock's price at the earnings date
-    (a unitless, cross-sectionally comparable "surprise yield").
-  * Ranking uses a TRAILING distribution: a signal is kept only if its SUE is in
-    the top decile of signals observed in the prior 365 days -- no look-ahead.
-  * Returns are reported both raw and market-adjusted (abnormal = stock - IWM
+    (a unitless "surprise yield"), kept for display/diagnostics only.
+  * Returns are reported both raw and market-adjusted (abnormal = stock - SPY
     over the same holding window), with a t-stat on the abnormal returns.
 """
 
-import csv
 import json
 import math
 import bisect
 import datetime
 import time
-import urllib.request
-from collections import deque
 from zoneinfo import ZoneInfo
 
 import yfinance as yf
@@ -38,187 +29,48 @@ LOOKBACK_YEARS = 5
 HOLD_DAYS = 60
 UPCOMING_DAYS = 30
 
-BENCHMARK = "IWM"        # Russell 2000 ETF — market proxy for abnormal returns
-TRAILING_DAYS = 365      # window for the trailing SUE distribution
-MIN_TRAILING = 50        # min prior signals before we trust a percentile
-TOP_PCTILE = 0.90        # keep signals at/above this percentile of the trailing window
+BENCHMARK = "SPY"        # broad-market proxy for abnormal-return calculation
 
-# iShares Russell 2000 ETF (IWM) holdings CSV — the live constituent source.
-# The CSV is downloaded from the ajax endpoint linked off the product page.
-IWM_PRODUCT_URL = (
-    "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf"
+# Curated, user-editable watchlist. The dashboard's "Watchlist" chip links here.
+TICKERS_FILE = "tickers.txt"
+WATCHLIST_URL = (
+    "https://github.com/hansenvalueinvesting/post-earnings-announcement-drift/"
+    "blob/main/tickers.txt"
 )
-IWM_HOLDINGS_URL = (
-    "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/"
-    "1467271812596.ajax?fileType=csv&fileName=IWM_holdings&dataType=fund"
-)
-# A bare request gets a 403 from iShares' bot protection, so send a full
-# browser-like header set (incl. a Referer to the product page) and retry.
-IWM_HEADERS = {
-    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                   "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
-    "Accept": "text/csv,application/csv,text/plain,*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": IWM_PRODUCT_URL,
-    "Connection": "keep-alive",
-}
 
-# Self-refreshing curated fallback. Rewritten on every successful live pull and
-# committed alongside data.json, so offline runs use the most recent known list.
-FALLBACK_FILE = "russell2000_fallback.json"
-
-# Seed fallback — a curated set of liquid Russell 2000 names used only if the
-# live pull fails AND the fallback file is missing/unreadable. In normal
-# operation FALLBACK_FILE supersedes this with the full live membership.
-RUSSELL2000_SEED = [
-    "AAON","ABCB","ABM","ACAD","ACIW","ACLS","ADMA","AEIS","AGYS","AKR",
-    "ALEX","ALG","ALKS","AMBA","AMN","AMWD","ANDE","AORT","APAM","APLE",
-    "APOG","ARCB","AROC","ASGN","ASTH","ATEN","ATGE","AVAV","AWR","AXNX",
-    "BANF","BANR","BCPC","BDC","BGS","BHE","BJRI","BKE","BL","BLMN",
-    "BMI","BOOT","BOX","BRC","BRKL","CAKE","CALM","CARG","CARS","CASH",
-    "CATY","CBRL","CBU","CCOI","CENT","CENX","CERT","CHCO","CHEF","CLW",
-    "CNK","CNMD","COLB","COLL","COOP","CORT","CPK","CRC","CRVL","CSGS",
-    "CTRE","CTS","CVCO","CWST","CWT","DAN","DCOM","DDD","DEA","DFIN",
-    "DIOD","DNOW","DOCN","DORM","DXPE","ECPG","EGBN","EIG","ELF","ENS",
-    "ENV","EPAC","EPRT","ESE","EXLS","EXPO","EXTR","EZPW","FBK","FCF",
-    "FCPT","FELE","FFBC","FHB","FIZZ","FORM","FOXF","FSS","FTDR","FUL",
-    "FULT","GBX","GEO","GFF","GMS","GNW","GOLF","GPI","GSHD","GTY",
-    "HASI","HCC","HCSG","HELE","HI","HLIO","HMN","HNI","HOMB","HUBG",
-    "HWKN","ICUI","IIPR","INDB","INSW","IOSP","IPAR","IRDM","ITGR","ITRI",
-    "JACK","JBT","JJSF","JOE","KAI","KALU","KFY","KMT","KN","KWR",
-    "LAD","LBRT","LCII","LGND","LKFN","LMAT","LNN","LOB","LRN","LXP",
-    "MATX","MCY","MGEE","MGY","MMS","MMSI","MODG","MTX","MYRG","NARI",
-    "NBHC","NEO","NEOG","NHC","NMIH","NPO","NSIT","NWBI","NWE","OFG",
-    "OII","OMCL","ONB","OSIS","OTTR","OXM","PATK","PBH","PECO","PFBC",
-    "PFS","PINC","PIPR","PLXS","PNTG","POWL","PRA","PRGS","PRIM","PRK",
-    "PTGX","PZZA","QLYS","RAMP","RDN","RDNT","REZI","RMBS","ROCK","RUSHA",
-    "RXO","SABR","SAFT","SAH","SANM","SBCF","SCL","SDGR","SFBS","SFNC",
-    "SHAK","SHOO","SIGI","SITM","SKT","SKYW","SLAB","SLG","SM","SMPL",
-    "SNEX","SONO","SPSC","SPT","SPTN","SR","SSB","SSD","STBA","STC",
-    "STEP","STRA","SXI","SXT","TBBK","TCBK","TDS","TFIN","TGNA","THRM",
-    "TMP","TNC","TPH","TRMK","TRN","TRNO","TRUP","TTMI","UCBI","UE",
-    "UFPI","UMBF","UNF","UPBD","URBN","USLM","USPH","VC","VCEL","VCYT",
-    "VECO","VIAV","VICR","VIRT","VRRM","VRTS","VSCO","WABC","WAFD","WD",
-    "WERN","WEN","WGO","WHD","WK","WS","WSFS","WT","WWW","XHR",
-    "XNCR","XPEL","YELP","ZD","ZWS"
+# Built-in fallback used only if tickers.txt is missing/empty.
+DEFAULT_TICKERS = [
+    "NVDA", "MSFT", "GOOG", "META", "AMZN", "SPOT", "NFLX",
+    "AXP", "V", "MA", "COST", "MCD", "KO", "MNST",
 ]
 
 
-def _clean_ticker(t):
-    """Normalize a raw ticker to yfinance form, or '' if it isn't an equity symbol."""
-    t = str(t).strip().strip('"').upper().replace('.', '-')
-    if not t or t in ('-', 'CASH', 'USD'):
-        return ''
-    if all(c.isalnum() or c == '-' for c in t) and len(t) <= 6 and any(c.isalpha() for c in t):
-        return t
-    return ''
+def load_tickers():
+    """Read the watchlist from tickers.txt.
 
-
-def _download_iwm_csv():
-    """GET the IWM holdings CSV with browser headers, retrying transient/403 errors.
-
-    Returns the decoded CSV text. Raises the last error if every attempt fails."""
-    last_err = None
-    for attempt in range(3):
-        try:
-            req = urllib.request.Request(IWM_HOLDINGS_URL, headers=IWM_HEADERS)
-            return urllib.request.urlopen(req, timeout=60).read().decode("utf-8-sig", "replace")
-        except Exception as e:
-            last_err = e
-            print(f"  iShares attempt {attempt + 1}/3 failed ({e})")
-            time.sleep(2 * (attempt + 1))
-    raise last_err
-
-
-def _scrape_russell2000():
-    """Download current IWM (Russell 2000 ETF) equity holdings from iShares.
-
-    The CSV has a few preamble lines, then a header row containing "Ticker",
-    one row per holding, then a footer of disclaimer text. Robustly locates the
-    header row (the Ticker column isn't guaranteed to be first) and reads the
-    Ticker / Asset Class columns by name. Returns (tickers, debug) where debug is
-    a short string describing what was parsed (or why nothing was)."""
-    raw = _download_iwm_csv()
-    rows = list(csv.reader(raw.splitlines()))
-
-    # Locate the header row: the first row containing a cell equal to "ticker".
-    header_i = col_tk = col_ac = None
-    for i, row in enumerate(rows):
-        norm = [c.strip().strip('"').lower() for c in row]
-        if 'ticker' in norm:
-            header_i = i
-            col_tk = norm.index('ticker')
-            col_ac = norm.index('asset class') if 'asset class' in norm else None
-            break
-
-    if header_i is None:
-        # No recognizable header — report what we actually received so we can
-        # tell an HTML bot-challenge page apart from an unexpected CSV layout.
-        head = raw.lstrip()[:60].replace('\n', ' ').replace('\r', ' ')
-        is_html = '<html' in raw[:2000].lower() or '<!doctype' in raw[:2000].lower()
-        kind = 'HTML/non-CSV' if is_html else 'no Ticker header'
-        return [], f'{kind}, {len(raw)}B, starts: {head!r}'
-
-    tickers = []
-    for row in rows[header_i + 1:]:
-        if col_tk >= len(row):
-            continue
-        if col_ac is not None and col_ac < len(row):
-            asset = row[col_ac].strip().strip('"').lower()
-            if asset and asset != 'equity':
-                continue
-        tk = _clean_ticker(row[col_tk])
-        if tk:
-            tickers.append(tk)
-    return sorted(set(tickers)), f'header@{header_i}, {len(tickers)} tickers'
-
-
-def _save_fallback(tickers, date_str):
-    """Persist the latest live membership as the curated fallback."""
+    Symbols may be separated by newlines, commas, or spaces; '#' starts a
+    comment. Dots are normalized to dashes to match yfinance (BRK.B -> BRK-B).
+    Falls back to DEFAULT_TICKERS if the file is missing or empty."""
     try:
-        with open(FALLBACK_FILE, 'w') as f:
-            json.dump({'updated': date_str, 'tickers': sorted(set(tickers))}, f, indent=1)
-        print(f"Refreshed {FALLBACK_FILE} ({len(tickers)} names, as of {date_str})")
-    except Exception as e:
-        print(f"Could not write {FALLBACK_FILE} ({e})")
+        with open(TICKERS_FILE) as f:
+            text = f.read()
+    except FileNotFoundError:
+        print(f"{TICKERS_FILE} not found — using built-in default watchlist")
+        text = ""
 
+    tickers, seen = [], set()
+    for line in text.splitlines():
+        line = line.split('#', 1)[0]
+        for tok in line.replace(',', ' ').split():
+            t = tok.strip().upper().replace('.', '-')
+            if t and t not in seen:
+                seen.add(t)
+                tickers.append(t)
 
-def _load_fallback():
-    """Load the curated fallback. Returns (tickers, updated_date_or_None)."""
-    try:
-        with open(FALLBACK_FILE) as f:
-            d = json.load(f)
-        tickers = [t for t in (_clean_ticker(x) for x in d.get('tickers', [])) if t]
-        if tickers:
-            return sorted(set(tickers)), d.get('updated')
-    except Exception as e:
-        print(f"Could not read {FALLBACK_FILE} ({e})")
-    return sorted(set(RUSSELL2000_SEED)), None
-
-
-def get_russell2000(today_str):
-    """Resolve the Russell 2000 universe.
-
-    Tries the live iShares IWM holdings file first; on success it refreshes the
-    curated fallback and returns (tickers, live=True, fallback_date=None, status).
-    On failure it loads the fallback list and returns (tickers, False, its date,
-    status) where status is a short human-readable reason the live pull failed."""
-    try:
-        tickers, debug = _scrape_russell2000()
-        if len(tickers) > 1000:
-            print(f"Got {len(tickers)} Russell 2000 holdings from iShares IWM")
-            _save_fallback(tickers, today_str)
-            return tickers, True, None, 'ok'
-        status = debug
-        print(f"iShares IWM yielded too few names ({debug}) — using fallback")
-    except Exception as e:
-        code = getattr(e, 'code', None)
-        status = f'HTTP {code}' if code else f'{type(e).__name__}'
-        print(f"iShares IWM download failed ({type(e).__name__}: {e}) — using fallback")
-    tickers, date = _load_fallback()
-    print(f"Using fallback list of {len(tickers)} names"
-          + (f" (last refreshed {date})" if date else " (seed)"))
-    return tickers, False, date, status
+    if not tickers:
+        tickers = list(DEFAULT_TICKERS)
+    print(f"Loaded {len(tickers)} watchlist tickers from {TICKERS_FILE}")
+    return tickers
 
 
 def fetch_earnings(sym, today_str):
@@ -284,39 +136,6 @@ def quarter_of(date_str):
     return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
 
 
-def select_trailing_decile(events):
-    """Keep events whose price-scaled SUE is in the top decile of the TRAILING
-    365-day distribution of signals (no look-ahead). Events are expected sorted
-    by date ascending. Returns the kept events with a 'quarter' tag."""
-    window = deque()      # (date_iso, sue) within the trailing window
-    sorted_sue = []       # sue values in the window, kept sorted for percentiles
-    kept = []
-
-    for ev in events:
-        d = datetime.datetime.strptime(ev['date'], '%Y-%m-%d').date()
-        w_start = (d - datetime.timedelta(days=TRAILING_DAYS)).isoformat()
-
-        # Evict signals that have aged out of the trailing window.
-        while window and window[0][0] < w_start:
-            _, s0 = window.popleft()
-            j = bisect.bisect_left(sorted_sue, s0)
-            sorted_sue.pop(j)
-
-        # Rank the current event against prior signals only.
-        if len(sorted_sue) >= MIN_TRAILING and ev['sue'] > 0:
-            rank = bisect.bisect_left(sorted_sue, ev['sue'])
-            pctile = rank / len(sorted_sue)
-            if pctile >= TOP_PCTILE:
-                ev['quarter'] = quarter_of(ev['date'])
-                kept.append(ev)
-
-        # Add current signal to the window for future events to rank against.
-        bisect.insort(sorted_sue, ev['sue'])
-        window.append((ev['date'], ev['sue']))
-
-    return kept
-
-
 def main():
     now = datetime.datetime.now(ZoneInfo('America/New_York'))
     today = now.date()
@@ -328,10 +147,9 @@ def main():
 
     print(f"=== Earnings Momentum Fetch | {today_str} | Lookback {LOOKBACK_YEARS}y ===\n")
 
-    # ── Universe (Russell 2000; current members throughout) ──
-    russell, russell_live, fallback_date, russell_status = get_russell2000(today_str)
-    tickers = sorted(set(russell))
-    print(f"Universe: {len(tickers)} Russell 2000 tickers\n")
+    # ── Universe (curated watchlist) ──
+    tickers = load_tickers()
+    print(f"Universe: {len(tickers)} watchlist tickers\n")
 
     # ── Fetch earnings ──
     earnings_hist = {}
@@ -370,8 +188,6 @@ def main():
     upcoming_earnings.sort(key=lambda x: (x['date'], x['symbol']))
 
     # ── Fetch prices (full universe + benchmark) ──
-    # Prices are needed up front because SUE is scaled by the price at the
-    # earnings date, so we must price every candidate, not just the selected.
     price_syms = sorted(set(earnings_hist) | {BENCHMARK})
     print(f"\nFetching prices for {len(price_syms)} symbols (incl. {BENCHMARK})...")
     prices, price_idx = {}, {}
@@ -391,9 +207,7 @@ def main():
     if not bench_idx:
         print(f"WARNING: no {BENCHMARK} prices — abnormal returns unavailable")
 
-    # ── Build price-scaled SUE events ──
-    # Every Russell 2000 ticker is treated as a member throughout the window, so
-    # no point-in-time membership filter is applied here.
+    # ── Build price-scaled SUE events (every earnings event, no ranking) ──
     events = []
     for sym, hist in earnings_hist.items():
         idx = price_idx.get(sym)
@@ -411,9 +225,10 @@ def main():
                 'surprise': e['surprise'],
                 # SUE as a "surprise yield": EPS surprise as a % of share price.
                 'sue': round(e['surprise'] / px * 100, 4),
+                'quarter': quarter_of(e['date']),
             })
     events.sort(key=lambda x: x['date'])
-    print(f"\nPrice-scaled signals: {len(events)}")
+    print(f"\nEarnings signals (all events): {len(events)}")
 
     if not events:
         with open('data.json', 'w') as f:
@@ -422,16 +237,11 @@ def main():
         print("No data. Wrote empty data.json.")
         return
 
-    # ── Trailing top-decile selection (no look-ahead) ──
-    top = select_trailing_decile(events)
-    top.sort(key=lambda x: x['date'])
-    print(f"Top-decile signals (trailing {TRAILING_DAYS}d): {len(top)}\n")
-
-    # ── Simulate trades ──
+    # ── Simulate trades (one per earnings event) ──
     print("Simulating trades...")
     trades = []
     today_dt = datetime.datetime.strptime(today_str, '%Y-%m-%d')
-    for ev in top:
+    for ev in events:
         sym = ev['symbol']
         px = prices.get(sym, [])
         if not px:
@@ -514,7 +324,7 @@ def main():
         'maxWin': round(max(wins), 2) if wins else 0,
         'avgLoss': round(sum(losses) / len(losses), 2) if losses else 0,
         'maxLoss': round(min(losses), 2) if losses else 0,
-        # Market-adjusted (abnormal vs IWM) — the metric that actually reflects drift.
+        # Market-adjusted (abnormal vs benchmark) — the metric that reflects drift.
         'avgAbnReturn': round(sum(closed_abn) / len(closed_abn), 2) if closed_abn else None,
         'avgBenchReturn': round(sum(closed_bench) / len(closed_bench), 2) if closed_bench else None,
         'abnWinRate': round(len([r for r in closed_abn if r > 0]) / len(closed_abn) * 100, 1) if closed_abn else None,
@@ -536,20 +346,13 @@ def main():
 
     # ── Live data-source status (shown in the dashboard header) ──
     n_priced = len([s for s in prices if s != BENCHMARK])
-    if russell_live:
-        russell_detail = 'Russell 2000 constituents (IWM)'
-        russell_count = f'{len(tickers)} names'
-    else:
-        russell_detail = (f'Russell 2000 fallback ({russell_status}) · refreshed '
-                          + (fallback_date or 'unknown'))
-        russell_count = f'{len(tickers)} names'
     data_sources = [
         {'name': 'Yahoo Finance', 'detail': 'earnings & prices',
          'live': bool(prices), 'count': f'{n_priced}/{len(tickers)} tickers'},
         {'name': f'Yahoo Finance · {BENCHMARK}', 'detail': 'benchmark',
          'live': bool(bench_idx), 'count': None},
-        {'name': 'iShares IWM', 'detail': russell_detail,
-         'live': russell_live, 'count': russell_count},
+        {'name': 'Watchlist', 'detail': 'edit on GitHub',
+         'live': True, 'count': f'{len(tickers)} tickers', 'url': WATCHLIST_URL},
     ]
 
     output = {
@@ -558,10 +361,10 @@ def main():
         'config': {
             'lookbackYears': LOOKBACK_YEARS,
             'holdDays': HOLD_DAYS,
-            'universe': 'Russell 2000 (current members)',
+            'universe': 'Custom watchlist',
             'benchmark': BENCHMARK,
             'sue': 'EPS surprise / price at earnings (%)',
-            'ranking': f'top decile of trailing {TRAILING_DAYS}d distribution',
+            'selection': 'all earnings events (no ranking)',
         },
         'tradeStats': trade_stats,
         'dataSources': data_sources,
