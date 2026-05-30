@@ -25,7 +25,7 @@ slippage or fees, long-only on positive surprises.
 |------|------|
 | `tickers.txt` | The watchlist — the universe of stocks tracked (one symbol per line; `#` comments allowed). |
 | `fetch_data.py` | The engine. Pulls data from Yahoo Finance, simulates trades, writes output. |
-| `trades_log.json` | The **persistent log** of every trade ever opened. The source of truth; grows over time. |
+| `trades_log.json` | The **persistent log** of every trade ever opened. The source of truth; grows over time. Stored as a JSON array with one trade per line for readability and clean diffs. |
 | `data.json` | The rendered snapshot the website reads (summary stats + trades + upcoming earnings). |
 | `index.html` | The dashboard — a static, client-side page that fetches `data.json` and renders charts/tables. |
 | `.github/workflows/update.yml` | The scheduler — runs the engine every 2 hours via GitHub Actions. |
@@ -69,7 +69,9 @@ appends them to the log, rather than rebuilding the full history every time.
 
 6. **Dashboard** (`index.html`): a static page that `fetch()`es `data.json` and
    renders the SUE-vs-return scatter, return distribution, returns-by-quarter,
-   and the open/closed trade tables. No backend — GitHub Pages serves the files.
+   and the open/closed trade tables. The header shows live data-source cards,
+   including links to the **Watchlist** (`tickers.txt`) and **Trade Log**
+   (`trades_log.json`) on GitHub. No backend — GitHub Pages serves the files.
 
 ## Lifecycle of one trade
 

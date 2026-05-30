@@ -100,6 +100,11 @@ WATCHLIST_URL = (
     "https://github.com/hansenvalueinvesting/post-earnings-announcement-drift/"
     "blob/main/tickers.txt"
 )
+# The dashboard's "Trade Log" chip links to the persistent log on GitHub.
+TRADE_LOG_URL = (
+    "https://github.com/hansenvalueinvesting/post-earnings-announcement-drift/"
+    "blob/main/trades_log.json"
+)
 
 # Built-in fallback used only if tickers.txt is missing/empty.
 DEFAULT_TICKERS = [
@@ -380,6 +385,8 @@ def main():
          'live': bool(bench_idx) or not need_syms, 'count': None},
         {'name': 'Watchlist', 'detail': 'edit on GitHub',
          'live': True, 'count': f'{len(tickers)} tickers', 'url': WATCHLIST_URL},
+        {'name': 'Trade Log', 'detail': 'view on GitHub',
+         'live': True, 'count': f'{len(trades)} trades', 'url': TRADE_LOG_URL},
     ]
 
     output = {
@@ -546,10 +553,15 @@ def load_trade_log():
 
 def save_trade_log(log):
     """Persist the trade log (sorted by earnings date) and return the sorted
-    list of records."""
+    list of records.
+
+    Written as a JSON array with one trade per line: still valid JSON, but
+    readable as a list and diff-friendly (a new trade is a one-line change)."""
     recs = sorted(log.values(), key=lambda t: (t['earningsDate'], t['symbol']))
     with open(TRADE_LOG_FILE, 'w') as f:
-        json.dump(recs, f)
+        f.write('[\n')
+        f.write(',\n'.join('  ' + json.dumps(r) for r in recs))
+        f.write('\n]\n' if recs else ']\n')
     return recs
 
 
