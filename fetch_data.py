@@ -239,20 +239,29 @@ def main():
     # One-off full re-seed (FULL_RESEED env var): scan the full LOOKBACK_YEARS
     # for *every* ticker, not just brand-new ones. Used after changing the
     # selection rule (e.g. lowering MIN_SUE) so previously-skipped events get a
-    # chance to enter. It's purely additive — only events not already in the log
-    # become candidates, so existing (immutable) trades are never disturbed.
+    # chance to enter. Adding is the common case (only events not already in the
+    # log become candidates), but a re-seed also *reconciles* existing trades
+    # against the current rule: trades opened on a now-disqualified event (a
+    # non-positive reported EPS) are pruned, since we re-fetch the full earnings
+    # metadata anyway. Normal incremental runs never prune.
     full_reseed = os.environ.get('FULL_RESEED', '').strip().lower() in ('1', 'true', 'yes')
     if full_reseed:
         print("FULL_RESEED set — scanning the full LOOKBACK_YEARS for every "
-              "watchlist ticker (one-off backfill).\n")
+              "watchlist ticker (one-off backfill + reconcile).\n")
     upcoming_earnings = []
     today_earnings = []
     earn_dates = {}
     new_candidates = []
+    # Reported EPS per scanned event, used to prune disqualified logged trades on
+    # a re-seed. Only events we actually fetched land here, so a fetch miss can
+    # never cause a trade to be pruned.
+    eps_actual = {}
     for i, sym in enumerate(tickers):
         print(f"  [{i+1}/{len(tickers)}] {sym}...", end=" ", flush=True)
         res = fetch_earnings(sym, today_str)
         raw = res['history']
+        for e in raw:
+            eps_actual[(sym, e['date'])] = e['actual']
 
         for d in res['upcoming']:
             if d <= upcoming_cutoff:
@@ -372,8 +381,20 @@ def main():
         else:
             new_trades += 1
         log[key] = trade
+
+    # On a re-seed, reconcile existing trades against the current rule: drop any
+    # opened on an event whose reported EPS we now know to be non-positive. Only
+    # events fetched this run (in eps_actual) are eligible, so an unscanned or
+    # failed-to-fetch trade is left untouched rather than wrongly pruned.
+    pruned = 0
+    if full_reseed:
+        for key in [k for k in log if eps_actual.get(k, 1) <= 0]:
+            del log[key]
+            pruned += 1
+
     trades = save_trade_log(log)
     print(f"\nSimulated {len(sim_events)} events: +{new_trades} new, {updated} refreshed, "
+          f"{pruned} pruned (non-positive EPS), "
           f"{skipped_low_sue} with non-positive SUE (<= {MIN_SUE:g}), "
           f"{skipped_neg_eps} with non-positive reported EPS. "
           f"Log now holds {len(trades)} trades.")

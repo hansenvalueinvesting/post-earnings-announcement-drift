@@ -127,7 +127,10 @@ All live near the top of `fetch_data.py`:
   backfill those, run the engine once with the `FULL_RESEED` env var set
   (`FULL_RESEED=1 python fetch_data.py`), or trigger the **Update Earnings Data**
   workflow manually with the **reseed** box checked. It rescans the full
-  `LOOKBACK_YEARS` for every ticker but is purely additive — only events not
-  already logged are added, so existing (immutable) trades are never disturbed.
+  `LOOKBACK_YEARS` for every ticker, adding events not yet logged. A re-seed also
+  **reconciles** the log against the current rule: trades opened on a now-
+  disqualified event (a non-positive reported EPS) are pruned. Pruning only
+  touches trades whose earnings metadata was re-fetched on that run, so a fetch
+  miss can never silently drop history. Normal incremental runs never prune.
 - **Run locally:** `pip install yfinance pandas tzdata curl_cffi lxml` then
   `python fetch_data.py` (note: Yahoo may block non-residential IPs).
