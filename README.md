@@ -55,8 +55,10 @@ appends them to the log, rather than rebuilding the full history every time.
 3. **Turn surprises into trades** (`simulate_trade`):
    - **SUE** ("surprise yield") = EPS surprise ÷ share price at earnings, as a
      percent. This is the signal strength.
-   - Only events with **SUE ≥ `MIN_SUE`** become long trades (PEAD is
-     directional; negative/marginal surprises are skipped).
+   - An event becomes a long trade only when its **SUE > `MIN_SUE`** *and* the
+     **reported EPS is positive** (PEAD is directional, so negative/marginal
+     surprises are skipped — as are "less-bad loss" beats, where a positive
+     surprise sits on a still-negative EPS, e.g. −10 vs −20).
    - **Entry:** first trading day after earnings. **Exit:** `HOLD_DAYS` later,
      or the day before the *next* earnings report if that comes first.
    - Returns are computed both **raw** and **abnormal** (stock return minus the
@@ -79,7 +81,7 @@ appends them to the log, rather than rebuilding the full history every time.
 ## Lifecycle of one trade
 
 ```
-Earnings beat (SUE ≥ MIN_SUE)
+Earnings beat (SUE > MIN_SUE & reported EPS > 0)
    → buy next trading day                          [open]
    → refreshed every run for ~HOLD_DAYS            [open, returnPct updates]
    → HOLD_DAYS pass (or next earnings hits first)

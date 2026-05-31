@@ -8,9 +8,10 @@ Methodology notes (see README / PR for rationale):
   * Universe: a hand-curated watchlist in tickers.txt (one symbol per line,
     '#' comments allowed). Edit that file to change which stocks are tracked.
   * Each earnings event becomes a long trade only when its SUE clears a
-    positive threshold (MIN_SUE); negative/marginal-SUE events are skipped.
-    PEAD is directional, so trading non-positive surprises long just fights
-    the drift.
+    positive threshold (MIN_SUE) AND the reported EPS is itself positive;
+    negative/marginal-SUE events are skipped, as are "less-bad loss" beats
+    (a positive surprise on a still-negative EPS). PEAD is directional, so
+    trading non-positive surprises long just fights the drift.
   * SUE is the EPS surprise scaled by the stock's price at the earnings date
     (a unitless "surprise yield"), used both to gate entry and for display.
   * Returns are reported both raw and market-adjusted (abnormal = stock - SPY
@@ -335,10 +336,16 @@ def main():
     # New events become trades only if their SUE clears the threshold; open
     # trades are re-simulated to refresh their value and finalize them on close.
     sim_events = []
-    skipped_low_sue = 0
+    skipped_low_sue = skipped_neg_eps = 0
     for e in new_candidates:
         idx = price_idx.get(e['symbol'])
         if not idx:
+            continue
+        # Only trade genuinely profitable quarters. A positive SUE can come from
+        # a loss that merely beat an even worse estimate (e.g. -10 vs -20 EPS);
+        # that's still a money-losing report, so skip any non-positive reported EPS.
+        if e['actual'] <= 0:
+            skipped_neg_eps += 1
             continue
         px_at = _price_asof(idx, e['date'])
         if not px_at or px_at <= 0:
@@ -367,7 +374,8 @@ def main():
         log[key] = trade
     trades = save_trade_log(log)
     print(f"\nSimulated {len(sim_events)} events: +{new_trades} new, {updated} refreshed, "
-          f"{skipped_low_sue} with non-positive SUE (<= {MIN_SUE:g}). "
+          f"{skipped_low_sue} with non-positive SUE (<= {MIN_SUE:g}), "
+          f"{skipped_neg_eps} with non-positive reported EPS. "
           f"Log now holds {len(trades)} trades.")
 
     if not trades:
@@ -436,7 +444,7 @@ def main():
             'universe': 'Custom watchlist',
             'benchmark': BENCHMARK,
             'sue': 'EPS surprise / price at earnings (%)',
-            'selection': f'long on SUE > {MIN_SUE:g}',
+            'selection': f'long on SUE > {MIN_SUE:g} & reported EPS > 0',
         },
         'tradeStats': trade_stats,
         'dataSources': data_sources,
