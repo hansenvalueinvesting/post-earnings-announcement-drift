@@ -5,6 +5,11 @@ on:
     # Run every 2 hours
     - cron: '0 */2 * * *'
   workflow_dispatch: # Manual trigger
+    inputs:
+      reseed:
+        description: 'Full re-seed: rescan full history for every ticker (use once after lowering MIN_SUE or to backfill missed trades).'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -26,6 +31,10 @@ jobs:
         run: pip install yfinance pandas tzdata curl_cffi lxml
 
       - name: Fetch earnings data
+        env:
+          # Scheduled runs leave this empty (normal incremental run); a manual
+          # dispatch with the "reseed" box checked forces a one-off full backfill.
+          FULL_RESEED: ${{ github.event.inputs.reseed }}
         run: python fetch_data.py
 
       - name: Commit and push data.json

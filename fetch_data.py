@@ -19,6 +19,7 @@ Methodology notes (see README / PR for rationale):
 
 import json
 import math
+import os
 import bisect
 import datetime
 import time
@@ -80,9 +81,9 @@ UPCOMING_DAYS = 30
 NEW_EVENT_LOOKBACK_DAYS = 120
 
 # Minimum SUE (EPS surprise as a % of share price) required to enter a long.
-# PEAD is directional — positive surprises drift up — so we only trade events
-# whose SUE clears this positive threshold and skip everything below it.
-MIN_SUE = 0.1
+# PEAD is directional — positive surprises drift up — so we go long on any
+# strictly positive surprise and skip flat/negative ones (i.e. SUE > MIN_SUE).
+MIN_SUE = 0.0
 
 BENCHMARK = "SPY"        # broad-market proxy for abnormal-return calculation
 
@@ -234,6 +235,15 @@ def main():
     # tickers (already in the log) keep the cheap shallow scan.
     backfill_floor = str(today - datetime.timedelta(days=365 * LOOKBACK_YEARS + 7))
     logged_syms = {s for (s, _) in log}
+    # One-off full re-seed (FULL_RESEED env var): scan the full LOOKBACK_YEARS
+    # for *every* ticker, not just brand-new ones. Used after changing the
+    # selection rule (e.g. lowering MIN_SUE) so previously-skipped events get a
+    # chance to enter. It's purely additive — only events not already in the log
+    # become candidates, so existing (immutable) trades are never disturbed.
+    full_reseed = os.environ.get('FULL_RESEED', '').strip().lower() in ('1', 'true', 'yes')
+    if full_reseed:
+        print("FULL_RESEED set — scanning the full LOOKBACK_YEARS for every "
+              "watchlist ticker (one-off backfill).\n")
     upcoming_earnings = []
     today_earnings = []
     earn_dates = {}
@@ -260,8 +270,10 @@ def main():
 
         # New events = earnings not already represented by a logged trade. A
         # ticker already in the log only needs the shallow window; a brand-new
-        # one is scanned across the full backfill window.
-        floor = new_event_floor if sym in logged_syms else backfill_floor
+        # one (or any ticker during a full re-seed) is scanned across the full
+        # backfill window.
+        deep = full_reseed or sym not in logged_syms
+        floor = backfill_floor if deep else new_event_floor
         fresh = [e for e in raw
                  if e['date'] >= floor and (sym, e['date']) not in log]
         new_candidates.extend({'symbol': sym, **e} for e in fresh)
@@ -333,8 +345,8 @@ def main():
             continue
         # SUE as a "surprise yield": EPS surprise as a % of share price.
         sue = round(e['surprise'] / px_at * 100, 4)
-        # PEAD is directional: only go long on positive surprises above threshold.
-        if sue < MIN_SUE:
+        # PEAD is directional: only go long on strictly positive surprises.
+        if sue <= MIN_SUE:
             skipped_low_sue += 1
             continue
         sim_events.append({'symbol': e['symbol'], 'date': e['date'], 'sue': sue})
@@ -355,7 +367,8 @@ def main():
         log[key] = trade
     trades = save_trade_log(log)
     print(f"\nSimulated {len(sim_events)} events: +{new_trades} new, {updated} refreshed, "
-          f"{skipped_low_sue} below SUE {MIN_SUE}. Log now holds {len(trades)} trades.")
+          f"{skipped_low_sue} with non-positive SUE (<= {MIN_SUE:g}). "
+          f"Log now holds {len(trades)} trades.")
 
     if not trades:
         preserve_last_known_good(today_str, updated_at, upcoming_earnings)
@@ -423,7 +436,7 @@ def main():
             'universe': 'Custom watchlist',
             'benchmark': BENCHMARK,
             'sue': 'EPS surprise / price at earnings (%)',
-            'selection': f'long on SUE >= {MIN_SUE}',
+            'selection': f'long on SUE > {MIN_SUE:g}',
         },
         'tradeStats': trade_stats,
         'dataSources': data_sources,
