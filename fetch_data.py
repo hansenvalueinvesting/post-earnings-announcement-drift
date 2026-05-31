@@ -227,6 +227,13 @@ def main():
     # Used only to surface upcoming earnings, drive next-earnings exits, and spot
     # NEW events — recent earnings we haven't already logged a trade for.
     new_event_floor = str(today - datetime.timedelta(days=NEW_EVENT_LOOKBACK_DAYS))
+    # A ticker freshly added to the watchlist has no trades on file, so the
+    # shallow new-event window would only ever catch its most recent quarter.
+    # Backfill such tickers across the full LOOKBACK_YEARS the first time we see
+    # them, so their history matches the rest of the watchlist; established
+    # tickers (already in the log) keep the cheap shallow scan.
+    backfill_floor = str(today - datetime.timedelta(days=365 * LOOKBACK_YEARS + 7))
+    logged_syms = {s for (s, _) in log}
     upcoming_earnings = []
     today_earnings = []
     earn_dates = {}
@@ -251,9 +258,12 @@ def main():
         if all_dates:
             earn_dates[sym] = all_dates
 
-        # New events = recent earnings not already represented by a logged trade.
+        # New events = earnings not already represented by a logged trade. A
+        # ticker already in the log only needs the shallow window; a brand-new
+        # one is scanned across the full backfill window.
+        floor = new_event_floor if sym in logged_syms else backfill_floor
         fresh = [e for e in raw
-                 if e['date'] >= new_event_floor and (sym, e['date']) not in log]
+                 if e['date'] >= floor and (sym, e['date']) not in log]
         new_candidates.extend({'symbol': sym, **e} for e in fresh)
         print(f"{len(fresh)} new" if fresh else "—")
         if (i + 1) % 10 == 0:
@@ -265,21 +275,36 @@ def main():
     # That's the trades still open (to refresh / finalize them) plus any new
     # events. Closed trades already in the log are immutable and never re-priced.
     today_dt = datetime.datetime.strptime(today_str, '%Y-%m-%d')
-    need_syms = {t['symbol'] for t in open_trades} | {e['symbol'] for e in new_candidates}
-    date_floor = [t['entryDate'] for t in open_trades] + [e['date'] for e in new_candidates]
+    # Earliest date each symbol must cover: an open trade's entry date, or a new
+    # event's earnings date. Tracking it per symbol keeps a deep backfill (a
+    # freshly added ticker reaching back LOOKBACK_YEARS) from forcing the same
+    # expensive 5-year pull on every other symbol.
+    sym_floor = {}
+    for sym, ds in [(t['symbol'], t['entryDate']) for t in open_trades] + \
+                   [(e['symbol'], e['date']) for e in new_candidates]:
+        if sym not in sym_floor or ds < sym_floor[sym]:
+            sym_floor[sym] = ds
+    need_syms = set(sym_floor)
 
     prices, price_idx, bench_idx = {}, {}, None
     if need_syms:
-        # Start a week before the earliest thing we need so as-of lookups
-        # (entry price, price-at-earnings for SUE) land on a real bar.
-        start_dt = datetime.datetime.strptime(min(date_floor), '%Y-%m-%d') - datetime.timedelta(days=7)
-        price_start = start_dt.strftime('%Y-%m-%d')
+        # The benchmark must span the whole window so every trade's abnormal
+        # return can be computed, so fetch it from the earliest date we need.
+        global_floor = min(sym_floor.values())
+
+        def price_start_for(sym):
+            # Start a week before the earliest thing we need so as-of lookups
+            # (entry price, price-at-earnings for SUE) land on a real bar.
+            d = global_floor if sym == BENCHMARK else sym_floor[sym]
+            start_dt = datetime.datetime.strptime(d, '%Y-%m-%d') - datetime.timedelta(days=7)
+            return start_dt.strftime('%Y-%m-%d')
+
         price_syms = sorted(need_syms | {BENCHMARK})
         print(f"\nFetching prices for {len(price_syms)} symbols (incl. {BENCHMARK}) "
-              f"from {price_start} — {len(open_trades)} open + {len(new_candidates)} new...")
+              f"from {global_floor} — {len(open_trades)} open + {len(new_candidates)} new...")
         for i, sym in enumerate(price_syms):
             print(f"  [{i+1}/{len(price_syms)}] {sym}...", end=" ", flush=True)
-            p = fetch_prices(sym, price_start)
+            p = fetch_prices(sym, price_start_for(sym))
             if p:
                 prices[sym] = p
                 price_idx[sym] = _build_index(p)

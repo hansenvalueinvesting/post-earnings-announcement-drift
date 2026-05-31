@@ -44,7 +44,10 @@ appends them to the log, rather than rebuilding the full history every time.
    - Pull cheap earnings *metadata* for each watchlist ticker (dates + reported
      vs. estimated EPS). Used to surface upcoming earnings, find each stock's
      next-earnings date (for exits), and spot **new events** — recent earnings
-     (within `NEW_EVENT_LOOKBACK_DAYS`) not already in the log.
+     (within `NEW_EVENT_LOOKBACK_DAYS`) not already in the log. A ticker just
+     added to the watchlist has no trades on file yet, so it is **backfilled**
+     across the full `LOOKBACK_YEARS` the first time it's seen — its history
+     then matches the rest of the watchlist and it reverts to the shallow scan.
    - Fetch **prices only for what must be (re)simulated**: trades still **open**
      (to refresh/finalize them) plus those new events, over a short recent
      window. Closed trades already in the log are never re-fetched.
@@ -103,7 +106,7 @@ All live near the top of `fetch_data.py`:
 | `NEW_EVENT_LOOKBACK_DAYS` | `120` | How far back to look for *new* events each run. |
 | `UPCOMING_DAYS` | `30` | Window for the "upcoming earnings" list. |
 | `BENCHMARK` | `SPY` | Proxy used for abnormal (market-adjusted) returns. |
-| `LOOKBACK_YEARS` | `5` | Only documents how the initial log was seeded. |
+| `LOOKBACK_YEARS` | `5` | History depth used to seed the log and to **backfill newly added watchlist tickers** on their first run. |
 
 ## Operational notes
 
@@ -113,5 +116,8 @@ All live near the top of `fetch_data.py`:
   none, it preserves the prior data and flags it stale instead of blanking the
   dashboard.
 - **Edit the watchlist:** change `tickers.txt` and the next run picks it up.
+  Newly added tickers are backfilled with their full `LOOKBACK_YEARS` of trade
+  history automatically on that run; removing a ticker leaves its past trades in
+  the log (history is never deleted).
 - **Run locally:** `pip install yfinance pandas tzdata curl_cffi lxml` then
   `python fetch_data.py` (note: Yahoo may block non-residential IPs).
