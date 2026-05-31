@@ -856,7 +856,8 @@ function renderDist(rets) {
     buckets[b] = (buckets[b] || 0) + 1;
   }
   const sortedKeys = Object.keys(buckets).sort((a, b) => +a - +b);
-  const labels = sortedKeys.map(b => `${b}%`);
+  // Label each 5% bin with the range it spans, e.g. "0-5%", "5-10%".
+  const labels = sortedKeys.map(b => `${+b}-${+b + 5}%`);
   const data = sortedKeys.map(k => buckets[k]);
   const colors = sortedKeys.map(b => +b >= 0 ? C.green : C.red);
 
