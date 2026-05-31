@@ -55,8 +55,10 @@ appends them to the log, rather than rebuilding the full history every time.
 3. **Turn surprises into trades** (`simulate_trade`):
    - **SUE** ("surprise yield") = EPS surprise ÷ share price at earnings, as a
      percent. This is the signal strength.
-   - Only events with **SUE ≥ `MIN_SUE`** become long trades (PEAD is
-     directional; negative/marginal surprises are skipped).
+   - An event becomes a long trade only when its **SUE > `MIN_SUE`** *and* the
+     **reported EPS is positive** (PEAD is directional, so negative/marginal
+     surprises are skipped — as are "less-bad loss" beats, where a positive
+     surprise sits on a still-negative EPS, e.g. −10 vs −20).
    - **Entry:** first trading day after earnings. **Exit:** `HOLD_DAYS` later,
      or the day before the *next* earnings report if that comes first.
    - Returns are computed both **raw** and **abnormal** (stock return minus the
@@ -79,7 +81,7 @@ appends them to the log, rather than rebuilding the full history every time.
 ## Lifecycle of one trade
 
 ```
-Earnings beat (SUE ≥ MIN_SUE)
+Earnings beat (SUE > MIN_SUE & reported EPS > 0)
    → buy next trading day                          [open]
    → refreshed every run for ~HOLD_DAYS            [open, returnPct updates]
    → HOLD_DAYS pass (or next earnings hits first)
@@ -101,7 +103,7 @@ All live near the top of `fetch_data.py`:
 
 | Constant | Default | Meaning |
 |----------|---------|---------|
-| `MIN_SUE` | `0.1` | Minimum SUE (EPS surprise as % of price) to enter a long. |
+| `MIN_SUE` | `0.0` | SUE floor (EPS surprise as % of price) to enter a long; entry requires SUE **strictly greater** than this, so the default trades every positive surprise. |
 | `HOLD_DAYS` | `60` | Target holding period after entry. |
 | `NEW_EVENT_LOOKBACK_DAYS` | `120` | How far back to look for *new* events each run. |
 | `UPCOMING_DAYS` | `30` | Window for the "upcoming earnings" list. |
@@ -119,5 +121,16 @@ All live near the top of `fetch_data.py`:
   Newly added tickers are backfilled with their full `LOOKBACK_YEARS` of trade
   history automatically on that run; removing a ticker leaves its past trades in
   the log (history is never deleted).
+- **Full re-seed:** the incremental scan only re-checks the recent window for
+  tickers already in the log, so a change to the *selection rule* (e.g. lowering
+  `MIN_SUE`) won't retroactively add events skipped under the old rule. To
+  backfill those, run the engine once with the `FULL_RESEED` env var set
+  (`FULL_RESEED=1 python fetch_data.py`), or trigger the **Update Earnings Data**
+  workflow manually with the **reseed** box checked. It rescans the full
+  `LOOKBACK_YEARS` for every ticker, adding events not yet logged. A re-seed also
+  **reconciles** the log against the current rule: trades opened on a now-
+  disqualified event (a non-positive reported EPS) are pruned. Pruning only
+  touches trades whose earnings metadata was re-fetched on that run, so a fetch
+  miss can never silently drop history. Normal incremental runs never prune.
 - **Run locally:** `pip install yfinance pandas tzdata curl_cffi lxml` then
   `python fetch_data.py` (note: Yahoo may block non-residential IPs).
