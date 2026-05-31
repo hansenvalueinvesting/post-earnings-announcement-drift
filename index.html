@@ -367,6 +367,18 @@
     </div>
   </div>
 
+  <div class="card" id="upcomingSec">
+    <h2>Upcoming Earnings <span class="badge" id="upcomingN">0</span> <span class="hint">next 30 days</span></h2>
+    <div class="t-wrap">
+      <table>
+        <thead><tr>
+          <th>Ticker</th><th>Date</th><th>In</th>
+        </tr></thead>
+        <tbody id="upcomingTb"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="card">
     <h2>All Trades <span class="hint">return % per trade · <span style="display:inline-block;width:10px;height:10px;background:#9aa0ab;border-radius:50%;vertical-align:middle"></span> closed &nbsp;<span style="display:inline-block;width:10px;height:10px;background:#d98a00;border-radius:50%;vertical-align:middle"></span> open</span>
       <span class="tog-group">
@@ -392,14 +404,15 @@
     </div>
   </div>
 
-  <div class="card" id="upcomingSec">
-    <h2>Upcoming Earnings <span class="badge" id="upcomingN">0</span> <span class="hint">next 30 days</span></h2>
+  <div class="card" id="byStockSec">
+    <h2>By Stock <span class="badge" id="byStockN">0</span> <span class="hint">closed trades · win rate &amp; avg return per ticker</span></h2>
     <div class="t-wrap">
       <table>
         <thead><tr>
-          <th>Ticker</th><th>Date</th><th>In</th>
+          <th>Ticker</th><th>Trades</th><th>Win Rate</th><th>Avg Return</th>
+          <th>Avg Win</th><th>Avg Loss</th><th>Total Return</th>
         </tr></thead>
-        <tbody id="upcomingTb"></tbody>
+        <tbody id="byStockTb"></tbody>
       </table>
     </div>
   </div>
@@ -480,6 +493,7 @@ async function init() {
     renderToday(data.today, data.updatedAt || data.updated);
     renderUpcoming(data.upcomingEarnings || []);
     renderOpen(open);
+    renderByStock(closed);
     renderClosed(closed);
     scatterTrades = trades;
     renderScatter(trades, scatterMode);
@@ -637,6 +651,46 @@ function renderClosed(trades) {
       <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${bg}"></div></div></td>
     </tr>`;
   }).join('');
+}
+
+function renderByStock(trades) {
+  const tb = document.getElementById('byStockTb');
+  const valid = trades.filter(t => t.returnPct != null);
+  // Aggregate closed trades per ticker.
+  const bySym = {};
+  for (const t of valid) {
+    (bySym[t.symbol] || (bySym[t.symbol] = [])).push(t.returnPct);
+  }
+  const rows = Object.entries(bySym).map(([sym, rets]) => {
+    const n = rets.length;
+    const wins = rets.filter(r => r >= 0);
+    const losses = rets.filter(r => r < 0);
+    const sum = rets.reduce((a, b) => a + b, 0);
+    return {
+      sym, n,
+      winRate: (wins.length / n) * 100,
+      avgRet: sum / n,
+      avgWin: wins.length ? wins.reduce((a, b) => a + b, 0) / wins.length : null,
+      avgLoss: losses.length ? losses.reduce((a, b) => a + b, 0) / losses.length : null,
+      total: sum
+    };
+  });
+  // Best total return first.
+  rows.sort((a, b) => b.total - a.total);
+
+  document.getElementById('byStockN').textContent = rows.length;
+  if (!rows.length) { tb.innerHTML = '<tr><td colspan="7" class="empty">No closed trades yet</td></tr>'; return; }
+  const pct = (v, signed) => v == null ? '—'
+    : `${signed && v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+  tb.innerHTML = rows.map(r => `<tr>
+      <td class="tk">${r.sym}</td>
+      <td>${r.n}</td>
+      <td class="${r.winRate >= 50 ? 'pos' : 'neg'}">${r.winRate.toFixed(0)}%</td>
+      <td class="${r.avgRet >= 0 ? 'pos' : 'neg'}">${pct(r.avgRet, true)}</td>
+      <td class="pos">${pct(r.avgWin, true)}</td>
+      <td class="neg">${pct(r.avgLoss, true)}</td>
+      <td class="${r.total >= 0 ? 'pos' : 'neg'}">${pct(r.total, true)}</td>
+    </tr>`).join('');
 }
 
 function pathToGradient(path) {
