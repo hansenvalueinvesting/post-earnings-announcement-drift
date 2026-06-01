@@ -110,38 +110,38 @@
   /* ── STAT GRID ── */
   .stats {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 14px;
-    margin-top: 24px;
+    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+    gap: 10px;
+    margin-top: 20px;
   }
   .stat {
     background: var(--surface);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 18px 20px;
+    border-radius: 8px;
+    padding: 11px 13px;
     box-shadow: var(--shadow);
   }
   .stat .label {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-dim);
     text-transform: uppercase;
-    letter-spacing: 0.6px;
+    letter-spacing: 0.5px;
     font-weight: 600;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
   }
   .stat .val {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 23px;
+    font-size: 19px;
     font-weight: 600;
     letter-spacing: -0.5px;
   }
   .stat .val.g { color: var(--green); }
   .stat .val.r { color: var(--red); }
   .stat .bh {
-    font-size: 11.5px;
+    font-size: 10.5px;
     color: var(--text-dim);
-    margin-top: 7px;
-    min-height: 14px;
+    margin-top: 4px;
+    min-height: 13px;
     letter-spacing: -0.2px;
   }
 
@@ -348,6 +348,7 @@
     <div class="stat"><div class="label">Win Rate</div><div class="val mono" id="sWinRate">—</div><div class="bh mono" id="sWinRateSub"></div></div>
     <div class="stat"><div class="label">Avg Win</div><div class="val mono" id="sAvgWin">—</div><div class="bh mono" id="sMaxWin"></div></div>
     <div class="stat"><div class="label">Avg Loss</div><div class="val mono" id="sAvgLoss">—</div><div class="bh mono" id="sMaxLoss"></div></div>
+    <div class="stat"><div class="label">Avg Annualized</div><div class="val mono" id="sAvgAnn">—</div><div class="bh mono" id="sAvgAnnSub"></div></div>
   </div>
 
   <div class="card" id="todaySec">
@@ -561,6 +562,24 @@ function renderStats(data) {
 
   setStat('sAvgLoss', s.avgLoss < 0 ? s.avgLoss.toFixed(2) + '%' : '—', 'r');
   document.getElementById('sMaxLoss').textContent = s.maxLoss ? `max ${s.maxLoss.toFixed(2)}%` : '';
+
+  // Average return annualized by each trade's holding period. Prefer the value
+  // baked into tradeStats; fall back to computing it from the trade log so the
+  // card still works against older data.json files that predate the field.
+  let avgAnn = s.avgAnnReturn;
+  if (avgAnn == null && Array.isArray(data.trades)) {
+    const ann = data.trades
+      .filter(t => !t.open && t.returnPct != null && t.daysHeld)
+      .map(t => (Math.pow(1 + t.returnPct / 100, 365 / t.daysHeld) - 1) * 100);
+    if (ann.length) avgAnn = ann.reduce((a, b) => a + b, 0) / ann.length;
+  }
+  if (avgAnn != null) {
+    setStat('sAvgAnn', (avgAnn >= 0 ? '+' : '') + avgAnn.toFixed(2) + '%', avgAnn >= 0 ? 'g' : 'r');
+    document.getElementById('sAvgAnnSub').textContent = `${s.closed} closed · ~${data.config?.holdDays || ''}d hold`;
+  } else {
+    setStat('sAvgAnn', '—');
+    document.getElementById('sAvgAnnSub').textContent = '';
+  }
 }
 
 function renderToday(today, stamp) {

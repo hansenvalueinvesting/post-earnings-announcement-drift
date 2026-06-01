@@ -411,12 +411,19 @@ def main():
     wins = [r for r in closed_rets if r > 0]
     losses = [r for r in closed_rets if r <= 0]
 
+    # Annualize each closed trade's raw return by its actual holding period,
+    # then average — so a +3% gain held 60 days is comparable to one held 30.
+    ann_rets = [((1 + t['returnPct'] / 100) ** (365 / t['daysHeld']) - 1) * 100
+                for t in closed_t
+                if t['returnPct'] is not None and t.get('daysHeld')]
+
     trade_stats = {
         'total': len(trades),
         'open': len(open_t),
         'closed': len(closed_t),
         'winRate': round(len(wins) / len(closed_rets) * 100, 1) if closed_rets else 0,
         'avgReturn': round(sum(closed_rets) / len(closed_rets), 2) if closed_rets else 0,
+        'avgAnnReturn': round(sum(ann_rets) / len(ann_rets), 2) if ann_rets else None,
         'avgWin': round(sum(wins) / len(wins), 2) if wins else 0,
         'maxWin': round(max(wins), 2) if wins else 0,
         'avgLoss': round(sum(losses) / len(losses), 2) if losses else 0,
