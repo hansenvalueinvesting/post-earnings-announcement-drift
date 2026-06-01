@@ -411,11 +411,16 @@ def main():
     wins = [r for r in closed_rets if r > 0]
     losses = [r for r in closed_rets if r <= 0]
 
-    # Annualize each closed trade's raw return by its actual holding period,
-    # then average — so a +3% gain held 60 days is comparable to one held 30.
-    ann_rets = [((1 + t['returnPct'] / 100) ** (365 / t['daysHeld']) - 1) * 100
-                for t in closed_t
-                if t['returnPct'] is not None and t.get('daysHeld')]
+    # Annualize the *average* trade by the average holding period. We avoid
+    # annualizing each trade then averaging: the (365/daysHeld) exponent is
+    # convex, so it inflates winners far more than it floors losers (one +42%
+    # trade annualizes to +752%), dragging the mean well above the median and
+    # misrepresenting a typical trade.
+    hold_days = [t['daysHeld'] for t in closed_t if t['returnPct'] is not None and t.get('daysHeld')]
+    avg_ret = sum(closed_rets) / len(closed_rets) if closed_rets else None
+    avg_days = sum(hold_days) / len(hold_days) if hold_days else None
+    avg_ann_return = (((1 + avg_ret / 100) ** (365 / avg_days) - 1) * 100
+                      if avg_ret is not None and avg_days else None)
 
     trade_stats = {
         'total': len(trades),
@@ -423,7 +428,8 @@ def main():
         'closed': len(closed_t),
         'winRate': round(len(wins) / len(closed_rets) * 100, 1) if closed_rets else 0,
         'avgReturn': round(sum(closed_rets) / len(closed_rets), 2) if closed_rets else 0,
-        'avgAnnReturn': round(sum(ann_rets) / len(ann_rets), 2) if ann_rets else None,
+        'avgAnnReturn': round(avg_ann_return, 2) if avg_ann_return is not None else None,
+        'avgHoldDays': round(avg_days, 1) if avg_days else None,
         'avgWin': round(sum(wins) / len(wins), 2) if wins else 0,
         'maxWin': round(max(wins), 2) if wins else 0,
         'avgLoss': round(sum(losses) / len(losses), 2) if losses else 0,
