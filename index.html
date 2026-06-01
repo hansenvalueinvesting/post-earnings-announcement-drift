@@ -357,7 +357,7 @@
   </div>
 
   <div class="card" id="openSec">
-    <h2>Open Trades <span class="badge" id="openN">0</span></h2>
+    <h2>Open Trades <span class="badge" id="openN">0</span> <span class="hint" id="openSum"></span></h2>
     <div class="t-wrap">
       <table>
         <thead><tr>
@@ -412,7 +412,7 @@
   </div>
 
   <div class="card" id="closedSec">
-    <h2>Closed Trades <span class="badge" id="closedN">0</span></h2>
+    <h2>Closed Trades <span class="badge" id="closedN">0</span> <span class="hint" id="closedSum"></span></h2>
     <div class="t-wrap">
       <table>
         <thead><tr>
@@ -629,8 +629,15 @@ function renderUpcoming(items) {
   }).join('');
 }
 
+function sumReturnsHtml(trades) {
+  const sum = trades.reduce((a, t) => a + (t.returnPct != null ? t.returnPct : 0), 0);
+  const cls = sum >= 0 ? 'pos' : 'neg';
+  return `<span class="${cls}">${sum >= 0 ? '+' : ''}${sum.toFixed(2)}%</span> total`;
+}
+
 function renderOpen(trades) {
   document.getElementById('openN').textContent = trades.length;
+  document.getElementById('openSum').innerHTML = trades.length ? sumReturnsHtml(trades) : '';
   const tb = document.getElementById('openTb');
   if (!trades.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No open trades</td></tr>'; return; }
   trades.sort((a, b) => b.sue - a.sue);
@@ -652,6 +659,7 @@ function renderOpen(trades) {
 
 function renderClosed(trades) {
   document.getElementById('closedN').textContent = trades.length;
+  document.getElementById('closedSum').innerHTML = trades.length ? sumReturnsHtml(trades) : '';
   const tb = document.getElementById('closedTb');
   if (!trades.length) { tb.innerHTML = '<tr><td colspan="10" class="empty">No closed trades</td></tr>'; return; }
   trades.sort((a, b) => new Date(b.exitDate) - new Date(a.exitDate));
