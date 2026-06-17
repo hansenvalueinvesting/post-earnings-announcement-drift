@@ -42,6 +42,35 @@ except Exception as _e:  # curl_cffi missing or failed to init
     print(f"curl_cffi unavailable ({_e}); using yfinance default session")
 
 
+def _finite(x):
+    """True only for a real, finite number (not None, NaN, or +/-Inf)."""
+    try:
+        return math.isfinite(float(x))
+    except (TypeError, ValueError):
+        return False
+
+
+def _json_safe(obj):
+    """Recursively replace non-finite floats (NaN, Infinity) with None.
+
+    Python's json emits these as the bare tokens `NaN`/`Infinity`, which are
+    valid for Python's own loader but rejected by JavaScript's JSON.parse — a
+    single NaN anywhere in data.json blanks the entire dashboard. Sanitizing
+    here keeps the output parseable everywhere."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_json_safe(v) for v in obj]
+    return obj
+
+
+def _dump_json(obj, f):
+    """Write JSON guaranteed to be browser-parseable (no NaN/Infinity tokens)."""
+    json.dump(_json_safe(obj), f, allow_nan=False)
+
+
 def _ticker(sym):
     # Defensive: some yfinance versions don't accept a custom session arg.
     if _SESSION is not None:
@@ -184,8 +213,12 @@ def fetch_prices(sym, start):
                     f"{sym} prices")
         if df is None or df.empty:
             return []
+        # Drop bars Yahoo returns with a missing/NaN close (it occasionally
+        # serves partial or placeholder rows). A NaN close otherwise poisons
+        # every return derived from it and, once written, produces a literal
+        # `NaN` token that JavaScript's JSON.parse rejects.
         return [{'date': d.strftime('%Y-%m-%d'), 'close': round(float(r['Close']), 2)}
-                for d, r in df.iterrows()]
+                for d, r in df.iterrows() if _finite(r['Close'])]
     except Exception:
         return []
 
@@ -405,9 +438,9 @@ def main():
 
     open_t = [t for t in trades if t['open']]
     closed_t = [t for t in trades if not t['open']]
-    closed_rets = [t['returnPct'] for t in closed_t if t['returnPct'] is not None]
-    closed_abn = [t['abnReturnPct'] for t in closed_t if t['abnReturnPct'] is not None]
-    closed_bench = [t['benchReturnPct'] for t in closed_t if t['benchReturnPct'] is not None]
+    closed_rets = [t['returnPct'] for t in closed_t if _finite(t['returnPct'])]
+    closed_abn = [t['abnReturnPct'] for t in closed_t if _finite(t['abnReturnPct'])]
+    closed_bench = [t['benchReturnPct'] for t in closed_t if _finite(t['benchReturnPct'])]
     wins = [r for r in closed_rets if r > 0]
     losses = [r for r in closed_rets if r <= 0]
 
@@ -416,7 +449,7 @@ def main():
     # convex, so it inflates winners far more than it floors losers (one +42%
     # trade annualizes to +752%), dragging the mean well above the median and
     # misrepresenting a typical trade.
-    hold_days = [t['daysHeld'] for t in closed_t if t['returnPct'] is not None and t.get('daysHeld')]
+    hold_days = [t['daysHeld'] for t in closed_t if _finite(t['returnPct']) and t.get('daysHeld')]
     avg_ret = sum(closed_rets) / len(closed_rets) if closed_rets else None
     avg_days = sum(hold_days) / len(hold_days) if hold_days else None
     avg_ann_return = (((1 + avg_ret / 100) ** (365 / avg_days) - 1) * 100
@@ -496,8 +529,8 @@ def main():
             "rate-limiting this run); open-trade values may be stale."
         )
     with open('data.json', 'w') as f:
-        json.dump(output, f)
-    print(f"\nWrote data.json ({len(json.dumps(output))} bytes). Done.")
+        _dump_json(output, f)
+    print(f"\nWrote data.json ({len(json.dumps(_json_safe(output)))} bytes). Done.")
 
 
 def simulate_trade(ev, prices, earn_dates, bench_idx, today_str, today_dt):
@@ -608,13 +641,13 @@ def preserve_last_known_good(today_str, updated_at, upcoming_earnings):
         if upcoming_earnings:
             prev['upcomingEarnings'] = upcoming_earnings
         with open('data.json', 'w') as f:
-            json.dump(prev, f)
+            _dump_json(prev, f)
         print(f"No new data — preserved {len(prev['trades'])} last-known-good "
               "trades (marked stale).")
     else:
         with open('data.json', 'w') as f:
-            json.dump({'trades': [], 'updated': today_str, 'updatedAt': updated_at,
-                       'upcomingEarnings': upcoming_earnings, 'error': 'No data'}, f)
+            _dump_json({'trades': [], 'updated': today_str, 'updatedAt': updated_at,
+                        'upcomingEarnings': upcoming_earnings, 'error': 'No data'}, f)
         print("No data and no prior snapshot. Wrote empty data.json.")
 
 
@@ -640,7 +673,7 @@ def save_trade_log(log):
     recs = sorted(log.values(), key=lambda t: (t['earningsDate'], t['symbol']))
     with open(TRADE_LOG_FILE, 'w') as f:
         f.write('[\n')
-        f.write(',\n'.join('  ' + json.dumps(r) for r in recs))
+        f.write(',\n'.join('  ' + json.dumps(_json_safe(r), allow_nan=False) for r in recs))
         f.write('\n]\n' if recs else ']\n')
     return recs
 
