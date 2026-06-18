@@ -115,6 +115,12 @@ NEW_EVENT_LOOKBACK_DAYS = 120
 # strictly positive surprise and skip flat/negative ones (i.e. SUE > MIN_SUE).
 MIN_SUE = 0.0
 
+# Momentum confirmation: the stock must actually close up on the earnings day
+# itself (close-to-close, vs the prior trading day) by more than this percent.
+# Filters out beats the market shrugged off or sold — we only chase reports the
+# tape rewarded the same day, entering > MIN_EARNINGS_DAY_RETURN.
+MIN_EARNINGS_DAY_RETURN = 0.5
+
 BENCHMARK = "SPY"        # broad-market proxy for abnormal-return calculation
 
 # Persistent, ever-growing log of every trade we've ever opened, keyed by
@@ -235,6 +241,25 @@ def _price_asof(idx, date_str):
     return closes[i] if i >= 0 else None
 
 
+def _price_before(idx, date_str):
+    """Most recent close strictly before date_str, or None if none exists."""
+    dates, closes = idx
+    i = bisect.bisect_left(dates, date_str) - 1
+    return closes[i] if i >= 0 else None
+
+
+def _earnings_day_return(idx, date_str):
+    """Close-to-close % return on the earnings day: the bar on/before `date_str`
+    vs the prior bar. None if either bar is missing (can't yet judge the move)."""
+    if not idx:
+        return None
+    day = _price_asof(idx, date_str)
+    prior = _price_before(idx, date_str)
+    if not day or not prior or prior <= 0:
+        return None
+    return round((day / prior - 1) * 100, 4)
+
+
 def quarter_of(date_str):
     d = datetime.datetime.strptime(date_str, '%Y-%m-%d')
     return f"{d.year}-Q{(d.month - 1) // 3 + 1}"
@@ -334,9 +359,15 @@ def main():
     # event's earnings date. Tracking it per symbol keeps a deep backfill (a
     # freshly added ticker reaching back LOOKBACK_YEARS) from forcing the same
     # expensive 5-year pull on every other symbol.
+    pairs = [(t['symbol'], t['entryDate']) for t in open_trades] + \
+            [(e['symbol'], e['date']) for e in new_candidates]
+    if full_reseed:
+        # A reseed reconciles existing trades against the current entry rules,
+        # which now includes the earnings-day move — so we need prices around
+        # each logged trade's earnings date to re-judge it.
+        pairs += [(t['symbol'], t['earningsDate']) for t in log.values()]
     sym_floor = {}
-    for sym, ds in [(t['symbol'], t['entryDate']) for t in open_trades] + \
-                   [(e['symbol'], e['date']) for e in new_candidates]:
+    for sym, ds in pairs:
         if sym not in sym_floor or ds < sym_floor[sym]:
             sym_floor[sym] = ds
     need_syms = set(sym_floor)
@@ -378,7 +409,7 @@ def main():
     # New events become trades only if their SUE clears the threshold; open
     # trades are re-simulated to refresh their value and finalize them on close.
     sim_events = []
-    skipped_low_sue = skipped_neg_eps = 0
+    skipped_low_sue = skipped_neg_eps = skipped_flat_day = 0
     for e in new_candidates:
         idx = price_idx.get(e['symbol'])
         if not idx:
@@ -398,6 +429,14 @@ def main():
         if sue <= MIN_SUE:
             skipped_low_sue += 1
             continue
+        # Momentum confirmation: require the stock to have closed up on the
+        # earnings day itself by more than MIN_EARNINGS_DAY_RETURN.
+        earn_ret = _earnings_day_return(idx, e['date'])
+        if earn_ret is None:
+            continue  # no prior bar to measure the earnings-day move yet
+        if earn_ret <= MIN_EARNINGS_DAY_RETURN:
+            skipped_flat_day += 1
+            continue
         sim_events.append({'symbol': e['symbol'], 'date': e['date'], 'sue': sue})
     for t in open_trades:
         sim_events.append({'symbol': t['symbol'], 'date': t['earningsDate'], 'sue': t['sue']})
@@ -415,21 +454,34 @@ def main():
             new_trades += 1
         log[key] = trade
 
-    # On a re-seed, reconcile existing trades against the current rule: drop any
-    # opened on an event whose reported EPS we now know to be non-positive. Only
-    # events fetched this run (in eps_actual) are eligible, so an unscanned or
-    # failed-to-fetch trade is left untouched rather than wrongly pruned.
+    # On a re-seed, reconcile existing trades against the current entry rules:
+    # drop any opened on an event that no longer qualifies — a now-known
+    # non-positive reported EPS, or an earnings day the stock didn't close up on
+    # by more than MIN_EARNINGS_DAY_RETURN. Only judge on data we actually
+    # fetched this run (eps_actual for EPS, fetched prices for the day move); a
+    # missing value leaves the trade untouched rather than wrongly pruning it.
     pruned = 0
     if full_reseed:
-        for key in [k for k in log if eps_actual.get(k, 1) <= 0]:
-            del log[key]
-            pruned += 1
+        for key in list(log):
+            sym, date = key
+            eps = eps_actual.get(key)
+            if eps is None:
+                continue  # event not re-scanned this run — leave intact
+            if eps <= 0:
+                del log[key]
+                pruned += 1
+                continue
+            earn_ret = _earnings_day_return(price_idx.get(sym), date)
+            if earn_ret is not None and earn_ret <= MIN_EARNINGS_DAY_RETURN:
+                del log[key]
+                pruned += 1
 
     trades = save_trade_log(log)
     print(f"\nSimulated {len(sim_events)} events: +{new_trades} new, {updated} refreshed, "
-          f"{pruned} pruned (non-positive EPS), "
+          f"{pruned} pruned (failed current entry rules), "
           f"{skipped_low_sue} with non-positive SUE (<= {MIN_SUE:g}), "
-          f"{skipped_neg_eps} with non-positive reported EPS. "
+          f"{skipped_neg_eps} with non-positive reported EPS, "
+          f"{skipped_flat_day} with a flat/down earnings day (<= {MIN_EARNINGS_DAY_RETURN:g}%). "
           f"Log now holds {len(trades)} trades.")
 
     if not trades:
@@ -511,7 +563,8 @@ def main():
             'universe': 'Custom watchlist',
             'benchmark': BENCHMARK,
             'sue': 'EPS surprise / price at earnings (%)',
-            'selection': f'long on SUE > {MIN_SUE:g} & reported EPS > 0',
+            'selection': (f'long on SUE > {MIN_SUE:g}, reported EPS > 0 & '
+                          f'earnings-day return > {MIN_EARNINGS_DAY_RETURN:g}%'),
         },
         'tradeStats': trade_stats,
         'dataSources': data_sources,
