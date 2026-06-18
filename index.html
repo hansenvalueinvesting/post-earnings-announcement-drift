@@ -351,9 +351,23 @@
     <div class="stat"><div class="label">Avg Annualized</div><div class="val mono" id="sAvgAnn">—</div><div class="bh mono" id="sAvgAnnSub"></div></div>
   </div>
 
-  <div class="card" id="todaySec">
-    <h2>Today <span class="hint" id="todayDate"></span></h2>
-    <div id="todayBody"></div>
+  <div class="dual">
+    <div class="card" id="todaySec">
+      <h2>Today <span class="hint" id="todayDate"></span></h2>
+      <div id="todayBody"></div>
+    </div>
+
+    <div class="card" id="upcomingSec">
+      <h2>Upcoming Earnings <span class="badge" id="upcomingN">0</span> <span class="hint">next 30 days</span></h2>
+      <div class="t-wrap">
+        <table>
+          <thead><tr>
+            <th>Ticker</th><th>Date</th><th>In</th>
+          </tr></thead>
+          <tbody id="upcomingTb"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <div class="card" id="openSec">
@@ -365,18 +379,6 @@
           <th>Entry $</th><th>Current $</th><th>P&L</th><th>Progress</th>
         </tr></thead>
         <tbody id="openTb"></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="card" id="upcomingSec">
-    <h2>Upcoming Earnings <span class="badge" id="upcomingN">0</span> <span class="hint">next 30 days</span></h2>
-    <div class="t-wrap">
-      <table>
-        <thead><tr>
-          <th>Ticker</th><th>Date</th><th>In</th>
-        </tr></thead>
-        <tbody id="upcomingTb"></tbody>
       </table>
     </div>
   </div>
@@ -640,7 +642,9 @@ function renderOpen(trades) {
   document.getElementById('openSum').innerHTML = trades.length ? sumReturnsHtml(trades) : '';
   const tb = document.getElementById('openTb');
   if (!trades.length) { tb.innerHTML = '<tr><td colspan="8" class="empty">No open trades</td></tr>'; return; }
-  trades.sort((a, b) => b.sue - a.sue);
+  // Fewest days left in the hold window first, so trades nearest exit sort to the top.
+  const daysLeft = t => (t.maxDays ?? 0) - (t.daysHeld ?? 0);
+  trades.sort((a, b) => daysLeft(a) - daysLeft(b) || b.sue - a.sue);
   tb.innerHTML = trades.map(t => {
     const cls = t.returnPct >= 0 ? 'pos' : 'neg';
     const pnl = t.returnPct != null ? `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%` : '—';
@@ -701,8 +705,8 @@ function renderByStock(trades) {
       median, min: sorted[0], max: sorted[n - 1]
     };
   });
-  // Best total return first.
-  rows.sort((a, b) => b.total - a.total);
+  // Best win rate first; break ties on total return.
+  rows.sort((a, b) => b.winRate - a.winRate || b.total - a.total);
 
   document.getElementById('byStockN').textContent = rows.length;
   if (!rows.length) {
