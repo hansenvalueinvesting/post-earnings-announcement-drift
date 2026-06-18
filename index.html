@@ -664,14 +664,15 @@ function renderClosed(trades) {
   if (!trades.length) { tb.innerHTML = '<tr><td colspan="10" class="empty">No closed trades</td></tr>'; return; }
   trades.sort((a, b) => new Date(b.exitDate) - new Date(a.exitDate));
   tb.innerHTML = trades.map(t => {
-    const cls = t.returnPct >= 0 ? 'pos' : 'neg';
-    const ret = `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%`;
+    const priced = t.returnPct != null;
+    const cls = priced ? (t.returnPct >= 0 ? 'pos' : 'neg') : '';
+    const ret = priced ? `${t.returnPct >= 0 ? '+' : ''}${t.returnPct.toFixed(2)}%` : '—';
     const pct = Math.min(100, (t.daysHeld / Math.max(1, t.maxDays)) * 100);
     const bg = pathToGradient(t.path);
     return `<tr>
       <td class="tk">${t.symbol}</td><td>${t.sue.toFixed(2)}</td>
       <td>${t.earningsDate}</td><td>${t.entryDate}</td><td>${t.exitDate}</td>
-      <td>$${t.entryPrice.toFixed(2)}</td><td>$${t.exitPrice.toFixed(2)}</td>
+      <td>$${t.entryPrice.toFixed(2)}</td><td>${t.exitPrice != null ? '$' + t.exitPrice.toFixed(2) : '—'}</td>
       <td class="${cls}">${ret}</td><td>${t.daysHeld}d</td>
       <td><div class="pbar"><div class="fill" style="width:${pct}%;background:${bg}"></div></div></td>
     </tr>`;
